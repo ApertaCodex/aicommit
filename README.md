@@ -28,10 +28,13 @@ brew install jq
 ## Usage
 
 ```bash
-aicommit              # Commit and push
-aicommit -n           # Commit without pushing
-aicommit -y           # Auto-accept generated message
-aicommit -y -n        # Combine options
+aicommit                    # Commit and push (default)
+aicommit -n / --no-push     # Commit without pushing
+aicommit -y / --yes         # Auto-accept generated message
+aicommit -y -n              # Combine options
+
+# Also works as a git command
+git aicommit
 ```
 
 The tool analyzes your git changes, generates a conventional commit message, and lets you review, edit, or abort before committing.
