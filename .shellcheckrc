@@ -1,0 +1,8 @@
+# Shellcheck configuration for aicommit
+# Disable specific warnings that are intentional in this project
+
+# Variables in printf format strings are intentional
+disable=SC2059
+
+# read without -r is acceptable for simple input
+disable=SC2162

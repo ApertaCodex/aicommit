@@ -4,8 +4,40 @@ Generate conventional commit messages using AI.
 
 ## Installation
 
+### Quick Install (Recommended)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/apertacodex/aicommit/main/install.sh | bash
+```
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap apertacodex/aicommit
+brew install aicommit
+```
+
+### Debian/Ubuntu
+
+```bash
+# Download latest release
+wget https://github.com/ApertaCodex/aicommit/releases/latest/download/aicommit_VERSION_all.deb
+sudo dpkg -i aicommit_VERSION_all.deb
+sudo apt-get install -f  # Install dependencies
+```
+
+### Fedora/RHEL/CentOS
+
+```bash
+sudo yum install https://github.com/ApertaCodex/aicommit/releases/latest/download/aicommit-VERSION-1.noarch.rpm
+```
+
+### From Source
+
+```bash
+git clone https://github.com/ApertaCodex/aicommit.git
+cd aicommit
+./install.sh
 ```
 
 ## Setup
@@ -88,6 +120,40 @@ aicommit --changelog
 - If `CHANGELOG.md` doesn't exist, it will be created with the standard template
 - If `CHANGELOG.md` has uncommitted changes, the update is skipped (commit still succeeds)
 - The changelog entry is added to the same commit (using `git commit --amend`)
+
+## Development
+
+### Running Tests
+
+```bash
+# Install BATS (Bash Automated Testing System)
+git clone https://github.com/bats-core/bats-core.git
+cd bats-core && sudo ./install.sh /usr/local
+
+# Run tests
+cd /path/to/aicommit
+./tests/run-tests.sh
+```
+
+### Linting
+
+```bash
+shellcheck aicommit install.sh scripts/*.sh
+```
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and contribution process.
+
+## CI/CD
+
+This project uses GitHub Actions for:
+- Automated testing on every PR (shellcheck, integration tests, install validation)
+- Automated releases on version tags
+- Multi-platform package building (deb, rpm)
+- Homebrew formula updates
+
+See [.github/workflows/](.github/workflows/) for workflow details.
 
 ## License
 
