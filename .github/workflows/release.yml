@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq curl git
+
+      - name: Prepare release (update CHANGELOG)
+        run: |
+          chmod +x scripts/prepare-release.sh
+          ./scripts/prepare-release.sh ${{ steps.get_version.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): update CHANGELOG for ${{ steps.get_version.outputs.version }}" || true
+
+      - name: Create release tarball
+        run: |
+          mkdir -p dist
+          tar -czf dist/aicommit-${{ steps.get_version.outputs.version }}.tar.gz \
+            aicommit install.sh README.md LICENSE CHANGELOG.md
+
+      - name: Copy standalone script
+        run: cp aicommit dist/aicommit
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          chmod +x scripts/extract-release-notes.sh
+          ./scripts/extract-release-notes.sh ${{ needs.build.outputs.version }} > release_notes.md
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.version }}
+          name: ${{ needs.build.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            dist/aicommit
+            dist/aicommit-${{ needs.build.outputs.version }}.tar.gz
+            dist/SHA256SUMS
+          draft: false
+          prerelease: false
+
+  debian-package:
+    name: Build Debian Package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install fpm
+        run: sudo gem install fpm
+
+      - name: Build .deb package
+        run: |
+          chmod +x scripts/build-deb.sh
+          ./scripts/build-deb.sh ${{ needs.build.outputs.version }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.version }}
+          files: aicommit_*.deb
+
+  rpm-package:
+    name: Build RPM Package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install fpm and rpm tools
+        run: |
+          sudo gem install fpm
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Build .rpm package
+        run: |
+          chmod +x scripts/build-rpm.sh
+          ./scripts/build-rpm.sh ${{ needs.build.outputs.version }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.version }}
+          files: aicommit-*.rpm
