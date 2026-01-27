@@ -82,7 +82,8 @@ jobs:
       - name: Verify installation
         run: |
           aicommit --help
-          git aicommit --help
+          # Test git integration (use -h instead of --help to avoid man page lookup)
+          git aicommit -h
 
   changelog-validation:
     name: CHANGELOG Validation

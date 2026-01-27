@@ -6,3 +6,9 @@ disable=SC2059
 
 # read without -r is acceptable for simple input
 disable=SC2162
+
+# Declare and assign separately - not necessary for our use case
+disable=SC2155
+
+# sed usage is more readable than parameter expansion in some cases
+disable=SC2001

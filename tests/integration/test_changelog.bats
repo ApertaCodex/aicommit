@@ -3,7 +3,8 @@
 load ../helpers/setup
 
 @test "CHANGELOG format validation" {
-  cd /home/paradox/Workspace/projects/aicommit || exit 1
+  PROJECT_ROOT=$(get_project_root)
+  cd "$PROJECT_ROOT" || exit 1
   [ -f CHANGELOG.md ]
   run grep "# Changelog" CHANGELOG.md
   [ "$status" -eq 0 ]
@@ -14,7 +15,8 @@ load ../helpers/setup
 }
 
 @test "CHANGELOG has standard sections" {
-  cd /home/paradox/Workspace/projects/aicommit || exit 1
+  PROJECT_ROOT=$(get_project_root)
+  cd "$PROJECT_ROOT" || exit 1
   [ -f CHANGELOG.md ]
   # Check for at least one standard section marker
   run grep -E "### (Added|Changed|Deprecated|Removed|Fixed|Security)" CHANGELOG.md
@@ -22,6 +24,7 @@ load ../helpers/setup
 }
 
 @test "CHANGELOG.md exists in project root" {
-  cd /home/paradox/Workspace/projects/aicommit || exit 1
+  PROJECT_ROOT=$(get_project_root)
+  cd "$PROJECT_ROOT" || exit 1
   [ -f CHANGELOG.md ]
 }
