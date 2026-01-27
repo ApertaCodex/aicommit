@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- GitHub release notes not showing in release body
+
 ### Added
 - Complete CI/CD infrastructure with GitHub Actions
 - Automated testing with BATS framework (12 integration tests)
