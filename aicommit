@@ -18,18 +18,21 @@ set -euo pipefail
 # ---------- Argument handling ----------
 NO_PUSH=false
 ASSUME_YES=false
+UPDATE_CHANGELOG=false
 
 while (( "$#" )); do
     case "$1" in
         --no-push|-n)  NO_PUSH=true ;;
         --yes|-y)      ASSUME_YES=true ;;
+        --changelog|-c) UPDATE_CHANGELOG=true ;;
         -h|--help)
             echo "ai_commit.sh – generate an AI commit message, commit and push."
             echo
             echo "Options:"
-            echo "  --no-push, -n   Do not push the commit to the remote."
-            echo "  --yes, -y       Assume yes: auto-use the generated message and skip prompts."
-            echo "  -h, --help      Show this help message."
+            echo "  --no-push, -n      Do not push the commit to the remote."
+            echo "  --yes, -y          Assume yes: auto-use the generated message and skip prompts."
+            echo "  --changelog, -c    Update CHANGELOG.md with this commit."
+            echo "  -h, --help         Show this help message."
             exit 0
             ;;
         *)  # unknown option – ignore (allows future positional args)
@@ -96,6 +99,107 @@ truncate_diff() {
     else
         echo -e "$diff_output"
     fi
+}
+
+update_changelog() {
+    local commit_msg="$1"
+    local changelog_file="CHANGELOG.md"
+
+    # Parse commit message to extract type and description
+    local first_line=$(echo "$commit_msg" | head -n 1)
+    local commit_type=$(echo "$first_line" | grep -oP '^[a-z]+' || echo "chore")
+    local commit_desc=$(echo "$first_line" | sed 's/^[a-z]\+(\?[^)]*)\?: //')
+
+    # Get the short hash of the last commit
+    local commit_hash=$(git rev-parse --short=7 HEAD)
+
+    # Map commit type to changelog category
+    local category
+    case "$commit_type" in
+        feat)     category="Added" ;;
+        fix)      category="Fixed" ;;
+        *)        category="Changed" ;;
+    esac
+
+    # Create CHANGELOG.md if it doesn't exist
+    if [[ ! -f "$changelog_file" ]]; then
+        cat > "$changelog_file" << 'EOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+EOF
+    fi
+
+    # Check if CHANGELOG was modified in the commit we just made
+    # If user manually edited it, we should skip auto-update to avoid conflicts
+    if git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -q "^CHANGELOG.md$"; then
+        echo "Warning: $changelog_file was modified in this commit. Skipping auto-update."
+        return 1
+    fi
+
+    # Create entry
+    local entry="- $commit_desc ($commit_hash)"
+
+    # Read the current CHANGELOG
+    local changelog_content=$(<"$changelog_file")
+
+    # Check if [Unreleased] section exists
+    if ! echo "$changelog_content" | grep -q "## \[Unreleased\]"; then
+        # Add [Unreleased] section at the top after the header
+        local header=$(echo "$changelog_content" | sed -n '1,/^$/p')
+        local rest=$(echo "$changelog_content" | sed '1,/^$/d')
+        changelog_content="${header}
+
+## [Unreleased]
+
+${rest}"
+    fi
+
+    # Check if category exists under [Unreleased]
+    if echo "$changelog_content" | sed -n '/## \[Unreleased\]/,/## \[/p' | grep -q "### $category"; then
+        # Category exists - insert entry after the category header
+        local temp_file=$(mktemp)
+        awk -v cat="### $category" -v entry="$entry" '
+            /## \[Unreleased\]/ { in_unreleased=1 }
+            /## \[/ && !/## \[Unreleased\]/ { in_unreleased=0 }
+            in_unreleased && $0 ~ cat {
+                print
+                getline
+                print entry
+                print $0
+                next
+            }
+            { print }
+        ' "$changelog_file" > "$temp_file"
+        mv "$temp_file" "$changelog_file"
+    else
+        # Category doesn't exist - create it under [Unreleased]
+        local temp_file=$(mktemp)
+        awk -v cat="### $category" -v entry="$entry" '
+            /## \[Unreleased\]/ {
+                print
+                print ""
+                print cat
+                print entry
+                inserted=1
+                next
+            }
+            { print }
+        ' "$changelog_file" > "$temp_file"
+        mv "$temp_file" "$changelog_file"
+    fi
+
+    # Stage the CHANGELOG and amend the commit
+    git add "$changelog_file"
+    git commit --amend --no-edit
+
+    return 0
 }
 
 # ---------- Gather diff ----------
@@ -270,6 +374,16 @@ git add -A
 git commit -m "$FINAL_MSG"
 
 echo -e "\n✅ Changes committed successfully!"
+
+# ---- Update CHANGELOG if flag is set ----
+if $UPDATE_CHANGELOG; then
+    echo "Updating CHANGELOG.md..."
+    if update_changelog "$FINAL_MSG"; then
+        echo "✅ CHANGELOG.md updated and commit amended."
+    else
+        echo "⚠️  CHANGELOG.md update skipped."
+    fi
+fi
 
 # ---- Optional push ----
 if ! $NO_PUSH; then
