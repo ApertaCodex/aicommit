@@ -48,10 +48,16 @@ jobs:
       - name: Copy standalone script
         run: cp aicommit dist/aicommit
 
+      - name: Extract release notes
+        run: |
+          chmod +x scripts/extract-release-notes.sh
+          ./scripts/extract-release-notes.sh ${{ steps.get_version.outputs.version }} > dist/release_notes.md
+          cat dist/release_notes.md
+
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          sha256sum aicommit aicommit-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload artifacts
@@ -65,28 +71,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-artifacts
           path: dist/
 
-      - name: Extract release notes
-        id: release_notes
+      - name: Display release notes
         run: |
-          chmod +x scripts/extract-release-notes.sh
-          ./scripts/extract-release-notes.sh ${{ needs.build.outputs.version }} > release_notes.md
-          cat release_notes.md
+          echo "Release notes for ${{ needs.build.outputs.version }}:"
+          cat dist/release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.build.outputs.version }}
           name: ${{ needs.build.outputs.version }}
-          body_path: release_notes.md
+          body_path: dist/release_notes.md
           files: |
             dist/aicommit
             dist/aicommit-${{ needs.build.outputs.version }}.tar.gz
