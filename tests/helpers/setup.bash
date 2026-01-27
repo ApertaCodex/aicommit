@@ -1,5 +1,16 @@
 # Common test setup functions for aicommit tests
 
+# Get the project root directory (where CHANGELOG.md should be)
+get_project_root() {
+  # This assumes the test is being run from the project directory
+  # or that BATS_TEST_DIRNAME is set (which BATS sets automatically)
+  if [ -n "${BATS_TEST_DIRNAME:-}" ]; then
+    echo "$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+  else
+    pwd
+  fi
+}
+
 # Setup a temporary git repository for testing
 setup_test_repo() {
   TEST_DIR=$(mktemp -d)
