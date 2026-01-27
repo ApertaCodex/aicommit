@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- update tests to use script path (fc0ce67)
+
 ### Added
 - add changelog update option (9aa461b)
 
