@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- GitHub release notes not showing in release body
+- Duplicate entries in CHANGELOG when creating releases
+- prepare-release.sh not clearing [Unreleased] section after moving content
 
 ### Added
 - Complete CI/CD infrastructure with GitHub Actions

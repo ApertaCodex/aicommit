@@ -40,16 +40,21 @@ if [ -z "$UNRELEASED_CONTENT" ]; then
   exit 1
 fi
 
-# Create new CHANGELOG with version section
+# Create new CHANGELOG with version section and clear Unreleased
 awk -v version="$VERSION" -v date="$DATE" -v content="$UNRELEASED_CONTENT" '
   /## \[Unreleased\]/ {
     print
     print ""
     print "## [" version "] - " date
     print content
+    # Skip all content in Unreleased section until next ## section
+    in_unreleased=1
     next
   }
-  { print }
+  in_unreleased && /^## \[/ {
+    in_unreleased=0
+  }
+  !in_unreleased { print }
 ' CHANGELOG.md.bak > CHANGELOG.md
 
 # Clean up backup
