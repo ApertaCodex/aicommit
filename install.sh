@@ -3,7 +3,7 @@
 # install.sh
 # Installation script for aicommit
 
-set -euo pipefail
+set -eo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,8 +33,17 @@ else
     SUDO="sudo"
 fi
 
-# Determine script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Determine if running from pipe (curl | bash) or locally
+if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ -f "${BASH_SOURCE[0]}" ]]; then
+    # Running locally from a file
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REMOTE_INSTALL=false
+else
+    # Running from pipe (curl | bash)
+    SCRIPT_DIR="/tmp/aicommit-install-$$"
+    REMOTE_INSTALL=true
+    mkdir -p "$SCRIPT_DIR"
+fi
 
 echo "========================================"
 echo "  AI Commit Installation"
@@ -72,10 +81,26 @@ print_success "curl found"
 
 echo
 
-# Check if aicommit script exists
-if [[ ! -f "$SCRIPT_DIR/aicommit" ]]; then
-    print_error "aicommit script not found in $SCRIPT_DIR"
-    exit 1
+# Download or copy aicommit script
+if [[ "$REMOTE_INSTALL" == true ]]; then
+    print_info "Downloading aicommit from GitHub..."
+
+    # Download the latest aicommit script
+    DOWNLOAD_URL="https://raw.githubusercontent.com/apertacodex/aicommit/main/aicommit"
+
+    if ! curl -fsSL "$DOWNLOAD_URL" -o "$SCRIPT_DIR/aicommit"; then
+        print_error "Failed to download aicommit from GitHub"
+        rm -rf "$SCRIPT_DIR"
+        exit 1
+    fi
+
+    print_success "Downloaded aicommit"
+else
+    # Check if aicommit script exists locally
+    if [[ ! -f "$SCRIPT_DIR/aicommit" ]]; then
+        print_error "aicommit script not found in $SCRIPT_DIR"
+        exit 1
+    fi
 fi
 
 # Install the script
@@ -90,6 +115,11 @@ else
 fi
 
 print_success "aicommit installed to $INSTALL_DIR/aicommit"
+
+# Cleanup temp directory for remote installs
+if [[ "$REMOTE_INSTALL" == true ]]; then
+    rm -rf "$SCRIPT_DIR"
+fi
 
 # Create git-aicommit wrapper if it doesn't exist
 if [[ ! -f "$INSTALL_DIR/git-aicommit" ]]; then
