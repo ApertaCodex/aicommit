@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Installation script now supports piped execution from curl (curl | bash)
+- BASH_SOURCE handling for remote installations
+- Automatic download of aicommit from GitHub during piped install
+
 ## [1.0.2] - 2026-01-27
 ### Fixed
 - Duplicate entries in CHANGELOG when creating releases
