@@ -2,20 +2,23 @@
 
 # AI Commit - Generates conventional commit messages using AI
 # ----------------------------------------------------------------------
-# Generates a Conventional‑Commit message with OpenAI, lets the user
-# review/edit it, commits the changes and (optionally) pushes to the
-# remote repository.
+# Generates a Conventional‑Commit message using a configurable AI
+# provider, lets the user review/edit it, commits the changes and
+# (optionally) pushes to the remote repository.
+#
+# Supported providers: openai, anthropic, gemini, groq, ollama, custom
 #
 # Usage:
-#   aicommit [--no-push|-n]        # commit and push (default)
-#   aicommit --no-push             # commit only, do NOT push
-#   aicommit -y|--yes              # non-interactive; auto-use generated message
-#   aicommit -h|--help             # show this help
-#   aicommit -V|--version          # show version information
+#   aicommit [--no-push|-n]            # commit and push (default)
+#   aicommit --no-push                 # commit only, do NOT push
+#   aicommit -y|--yes                  # non-interactive; auto-use generated message
+#   aicommit -p|--provider <name>      # use a specific AI provider
+#   aicommit -h|--help                 # show this help
+#   aicommit -V|--version              # show version information
 # ----------------------------------------------------------------------
 
 # Version information
-VERSION="1.0.3"
+VERSION="1.1.0"
 
 # Display banner with rainbow-style ASCII art header
 show_banner() {
@@ -56,35 +59,169 @@ show_banner() {
     echo ""
 }
 
+# ---------- Colors ----------
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_DIM='\033[2m'
+C_GREEN='\033[32m'
+C_RED='\033[31m'
+C_YELLOW='\033[33m'
+C_CYAN='\033[36m'
+C_WHITE='\033[37m'
+C_MAGENTA='\033[35m'
+
+# Status indicators
+STATUS_OK="${C_GREEN}●${C_RESET}"
+STATUS_MISS="${C_RED}●${C_RESET}"
+STATUS_WARN="${C_YELLOW}●${C_RESET}"
+
+show_help() {
+    echo -e "${C_BOLD}aicommit${C_RESET} – generate an AI commit message, commit and push."
+    echo
+
+    # --- Options ---
+    echo -e "${C_BOLD}${C_CYAN}Options:${C_RESET}"
+    echo -e "  ${C_GREEN}--provider${C_RESET}, ${C_GREEN}-p${C_RESET} ${C_DIM}<name>${C_RESET}  AI provider to use for this run."
+    echo -e "  ${C_GREEN}--no-push${C_RESET},  ${C_GREEN}-n${C_RESET}          Do not push the commit to the remote."
+    echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
+    echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
+    echo -e "  ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}            Show version information."
+    echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
+    echo
+
+    # --- Current config ---
+    echo -e "${C_BOLD}${C_CYAN}Current configuration:${C_RESET}"
+
+    # Resolve what the active default provider would be
+    local cfg_default=""
+    if [[ -f "$HOME/.aicommitrc" ]]; then
+        cfg_default=$(grep -E '^AICOMMIT_PROVIDER=' "$HOME/.aicommitrc" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]"'"'" || true)
+    fi
+    local env_default="${AICOMMIT_PROVIDER:-}"
+    local active_default=""
+    local source_label=""
+
+    if [[ -n "$env_default" ]]; then
+        active_default="$env_default"
+        source_label="env AICOMMIT_PROVIDER"
+    elif [[ -n "$cfg_default" ]]; then
+        active_default="$cfg_default"
+        source_label="~/.aicommitrc"
+    fi
+
+    if [[ -n "$active_default" ]]; then
+        echo -e "  Default provider: ${C_BOLD}${C_GREEN}$active_default${C_RESET} ${C_DIM}(from $source_label)${C_RESET}"
+    else
+        echo -e "  Default provider: ${C_DIM}(none – will auto-detect)${C_RESET}"
+    fi
+
+    if [[ -f "$HOME/.aicommitrc" ]]; then
+        echo -e "  Config file:      ${C_GREEN}~/.aicommitrc${C_RESET} ${C_DIM}(found)${C_RESET}"
+    else
+        echo -e "  Config file:      ${C_DIM}~/.aicommitrc (not found)${C_RESET}"
+    fi
+    echo
+
+    # --- Provider status table ---
+    echo -e "${C_BOLD}${C_CYAN}Providers:${C_RESET}"
+    echo -e "  ${C_DIM}STATUS  PROVIDER     MODEL                          ENV VAR${C_RESET}"
+
+    # openai
+    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+        echo -e "  ${STATUS_OK}  ${C_BOLD}openai${C_RESET}       ${C_WHITE}gpt-4o-mini${C_RESET}                    ${C_GREEN}OPENAI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  openai       ${C_DIM}gpt-4o-mini${C_RESET}                    ${C_RED}OPENAI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+    fi
+
+    # anthropic
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        echo -e "  ${STATUS_OK}  ${C_BOLD}anthropic${C_RESET}    ${C_WHITE}claude-sonnet-4-20250514${C_RESET}       ${C_GREEN}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  anthropic    ${C_DIM}claude-sonnet-4-20250514${C_RESET}       ${C_RED}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+    fi
+
+    # gemini
+    if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+        echo -e "  ${STATUS_OK}  ${C_BOLD}gemini${C_RESET}       ${C_WHITE}gemini-2.0-flash${C_RESET}              ${C_GREEN}GEMINI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  gemini       ${C_DIM}gemini-2.0-flash${C_RESET}              ${C_RED}GEMINI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+    fi
+
+    # groq
+    if [[ -n "${GROQ_API_KEY:-}" ]]; then
+        echo -e "  ${STATUS_OK}  ${C_BOLD}groq${C_RESET}         ${C_WHITE}llama-3.3-70b-versatile${C_RESET}        ${C_GREEN}GROQ_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  groq         ${C_DIM}llama-3.3-70b-versatile${C_RESET}        ${C_RED}GROQ_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+    fi
+
+    # ollama
+    if command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null; then
+        local ollama_model
+        ollama_model=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // "none"' 2>/dev/null || echo "none")
+        echo -e "  ${STATUS_OK}  ${C_BOLD}ollama${C_RESET}       ${C_WHITE}${ollama_model}${C_RESET}    ${C_GREEN}server running${C_RESET}"
+    elif command -v ollama &>/dev/null; then
+        echo -e "  ${STATUS_WARN}  ollama       ${C_DIM}(auto-detect)${C_RESET}                  ${C_YELLOW}installed, server not running${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  ollama       ${C_DIM}(auto-detect)${C_RESET}                  ${C_RED}not installed${C_RESET}"
+    fi
+
+    # custom
+    if [[ -n "${AICOMMIT_CUSTOM_API_URL:-}" && -n "${AICOMMIT_CUSTOM_API_KEY:-}" ]]; then
+        local custom_model="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}"
+        echo -e "  ${STATUS_OK}  ${C_BOLD}custom${C_RESET}       ${C_WHITE}${custom_model}${C_RESET}    ${C_GREEN}AICOMMIT_CUSTOM_API_URL${C_RESET} ${C_DIM}(set)${C_RESET}"
+    else
+        echo -e "  ${STATUS_MISS}  custom       ${C_DIM}(configurable)${C_RESET}                 ${C_RED}AICOMMIT_CUSTOM_API_URL + _KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+    fi
+    echo
+
+    # --- Quick reference ---
+    echo -e "${C_BOLD}${C_CYAN}Quick setup:${C_RESET}"
+    echo -e "  ${C_DIM}# Set a provider key${C_RESET}"
+    echo -e "  export ${C_YELLOW}OPENAI_API_KEY${C_RESET}='sk-...'"
+    echo -e ""
+    echo -e "  ${C_DIM}# Set default provider${C_RESET}"
+    echo -e "  echo '${C_YELLOW}AICOMMIT_PROVIDER${C_RESET}=openai' >> ~/.aicommitrc"
+    echo -e ""
+    echo -e "  ${C_DIM}# Override provider for a single run${C_RESET}"
+    echo -e "  aicommit ${C_GREEN}--provider${C_RESET} anthropic"
+}
+
 set -euo pipefail
+
+# ---------- Provider constants ----------
+VALID_PROVIDERS="openai anthropic gemini groq ollama custom"
+CONFIG_FILE="$HOME/.aicommitrc"
 
 # ---------- Argument handling ----------
 NO_PUSH=false
 ASSUME_YES=false
 UPDATE_CHANGELOG=false
+CLI_PROVIDER=""
 
 while (( "$#" )); do
     case "$1" in
         --no-push|-n)  NO_PUSH=true ;;
         --yes|-y)      ASSUME_YES=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
+        --provider|-p)
+            shift
+            if [[ -z "${1:-}" ]]; then
+                echo "Error: --provider requires a value."
+                echo "Valid providers: $VALID_PROVIDERS"
+                exit 1
+            fi
+            CLI_PROVIDER="$1"
+            ;;
         -V|--version)
             show_banner
             exit 0
             ;;
         -h|--help)
             show_banner
-            echo "aicommit – generate an AI commit message, commit and push."
-            echo
-            echo "Options:"
-            echo "  --no-push, -n      Do not push the commit to the remote."
-            echo "  --yes, -y          Assume yes: auto-use the generated message and skip prompts."
-            echo "  --changelog, -c    Update CHANGELOG.md with this commit."
-            echo "  -V, --version      Show version information."
-            echo "  -h, --help         Show this help message."
+            show_help
             exit 0
             ;;
-        *)  # unknown option – ignore (allows future positional args)
+        *)
             echo "Warning: unknown option \"$1\" ignored."
             ;;
     esac
@@ -98,18 +235,333 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
 fi
 
 # ---------- Environment checks ----------
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-    echo "Error: OPENAI_API_KEY environment variable is not set."
-    echo "Please set it with: export OPENAI_API_KEY='your-api-key'"
-    exit 1
-fi
-
 if ! command -v jq &>/dev/null; then
     echo "Error: jq is not installed. Please install it first."
     echo "Ubuntu/Debian: sudo apt-get install jq"
     echo "macOS: brew install jq"
     exit 1
 fi
+
+# ---------- Provider helpers ----------
+provider_available() {
+    case "$1" in
+        openai)    [[ -n "${OPENAI_API_KEY:-}" ]] ;;
+        anthropic) [[ -n "${ANTHROPIC_API_KEY:-}" ]] ;;
+        gemini)    [[ -n "${GEMINI_API_KEY:-}" ]] ;;
+        groq)      [[ -n "${GROQ_API_KEY:-}" ]] ;;
+        ollama)    command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null ;;
+        custom)    [[ -n "${AICOMMIT_CUSTOM_API_URL:-}" && -n "${AICOMMIT_CUSTOM_API_KEY:-}" ]] ;;
+        *)         return 1 ;;
+    esac
+}
+
+detect_first_provider() {
+    for p in openai anthropic gemini groq ollama custom; do
+        if provider_available "$p"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ---------- Resolve provider ----------
+PROVIDER=""
+
+# 1. CLI flag
+if [[ -n "$CLI_PROVIDER" ]]; then
+    PROVIDER="$CLI_PROVIDER"
+# 2. Environment variable
+elif [[ -n "${AICOMMIT_PROVIDER:-}" ]]; then
+    PROVIDER="$AICOMMIT_PROVIDER"
+# 3. Config file
+elif [[ -f "$CONFIG_FILE" ]]; then
+    cfg_provider=$(grep -E '^AICOMMIT_PROVIDER=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]"'"'" || true)
+    if [[ -n "$cfg_provider" ]]; then
+        PROVIDER="$cfg_provider"
+    fi
+fi
+
+# 4. Auto-detect
+if [[ -z "$PROVIDER" ]]; then
+    PROVIDER=$(detect_first_provider || true)
+fi
+
+if [[ -z "$PROVIDER" ]]; then
+    echo "Error: No AI provider configured or detected."
+    echo
+    echo "Set one of these environment variables:"
+    echo "  export OPENAI_API_KEY='your-key'       (for OpenAI)"
+    echo "  export ANTHROPIC_API_KEY='your-key'     (for Anthropic/Claude)"
+    echo "  export GEMINI_API_KEY='your-key'        (for Google Gemini)"
+    echo "  export GROQ_API_KEY='your-key'          (for Groq)"
+    echo "  Install and run Ollama locally           (for Ollama)"
+    echo "  export AICOMMIT_CUSTOM_API_URL + AICOMMIT_CUSTOM_API_KEY (for custom)"
+    echo
+    echo "Or set a default: echo 'AICOMMIT_PROVIDER=openai' >> ~/.aicommitrc"
+    exit 1
+fi
+
+# Validate provider name
+if ! echo "$VALID_PROVIDERS" | grep -qw "$PROVIDER"; then
+    echo "Error: Unknown provider '$PROVIDER'."
+    echo "Valid providers: $VALID_PROVIDERS"
+    exit 1
+fi
+
+# Validate provider has required credentials
+if ! provider_available "$PROVIDER"; then
+    case "$PROVIDER" in
+        openai)    echo "Error: OPENAI_API_KEY is not set." ;;
+        anthropic) echo "Error: ANTHROPIC_API_KEY is not set." ;;
+        gemini)    echo "Error: GEMINI_API_KEY is not set." ;;
+        groq)      echo "Error: GROQ_API_KEY is not set." ;;
+        ollama)    echo "Error: Ollama is not installed or the server is not running (http://localhost:11434)." ;;
+        custom)    echo "Error: AICOMMIT_CUSTOM_API_URL and/or AICOMMIT_CUSTOM_API_KEY is not set." ;;
+    esac
+    exit 1
+fi
+
+# ---------- Provider API functions ----------
+SYSTEM_PROMPT="You are a helpful assistant that generates git commit messages following the Conventional Commits specification. Focus on the actual code changes to determine the type and scope. Keep the message concise but complete, under 50 characters for the first line if possible."
+
+build_user_prompt() {
+    cat <<EOF
+Generate a concise and descriptive git commit message for the following changes.
+Follow the conventional commits specification (https://www.conventionalcommits.org/).
+Use one of these types: feat, fix, docs, style, refactor, test, chore.
+
+Rules:
+1. Format first line as: <type>(<scope>): <description>
+2. The first line should be under 50 characters if possible
+3. After the first line, add a blank line and then bullet points for details
+4. Each bullet point should start with a hyphen
+5. Keep bullet points short and clear
+6. Focus on WHAT changed and WHY, not HOW
+
+Here are the changes:
+
+$1
+EOF
+}
+
+call_openai() {
+    local user_prompt="$1"
+    local payload
+    payload=$(jq -n \
+        --arg content "$SYSTEM_PROMPT" \
+        --arg prompt "$user_prompt" \
+        '{
+            model: "gpt-4o-mini",
+            messages: [
+                {role: "system",   content: $content},
+                {role: "user",     content: $prompt}
+            ],
+            temperature: 0.7,
+            max_tokens: 2048
+        }')
+
+    local response
+    response=$(curl -s https://api.openai.com/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $OPENAI_API_KEY" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error.message')
+        echo "Error from OpenAI API: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.choices[0].message.content'
+}
+
+call_anthropic() {
+    local user_prompt="$1"
+    local payload
+    payload=$(jq -n \
+        --arg system "$SYSTEM_PROMPT" \
+        --arg prompt "$user_prompt" \
+        '{
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 2048,
+            system: $system,
+            messages: [
+                {role: "user", content: $prompt}
+            ]
+        }')
+
+    local response
+    response=$(curl -s https://api.anthropic.com/v1/messages \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $ANTHROPIC_API_KEY" \
+        -H "anthropic-version: 2023-06-01" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error.message')
+        echo "Error from Anthropic API: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.content[0].text'
+}
+
+call_gemini() {
+    local user_prompt="$1"
+    local combined_prompt="$SYSTEM_PROMPT
+
+$user_prompt"
+    local payload
+    payload=$(jq -n \
+        --arg text "$combined_prompt" \
+        '{
+            contents: [{
+                parts: [{text: $text}]
+            }],
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 2048
+            }
+        }')
+
+    local response
+    response=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error.message')
+        echo "Error from Gemini API: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.candidates[0].content.parts[0].text'
+}
+
+call_groq() {
+    local user_prompt="$1"
+    local payload
+    payload=$(jq -n \
+        --arg content "$SYSTEM_PROMPT" \
+        --arg prompt "$user_prompt" \
+        '{
+            model: "llama-3.3-70b-versatile",
+            messages: [
+                {role: "system",   content: $content},
+                {role: "user",     content: $prompt}
+            ],
+            temperature: 0.7,
+            max_tokens: 2048
+        }')
+
+    local response
+    response=$(curl -s https://api.groq.com/openai/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $GROQ_API_KEY" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error.message')
+        echo "Error from Groq API: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.choices[0].message.content'
+}
+
+call_ollama() {
+    local user_prompt="$1"
+
+    # Auto-detect the first available model
+    local model
+    model=$(curl -sf http://localhost:11434/api/tags | jq -r '.models[0].name // empty')
+    if [[ -z "$model" ]]; then
+        echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
+        return 1
+    fi
+
+    local payload
+    payload=$(jq -n \
+        --arg model "$model" \
+        --arg system "$SYSTEM_PROMPT" \
+        --arg prompt "$user_prompt" \
+        '{
+            model: $model,
+            messages: [
+                {role: "system",   content: $system},
+                {role: "user",     content: $prompt}
+            ],
+            stream: false
+        }')
+
+    local response
+    response=$(curl -s http://localhost:11434/api/chat \
+        -H "Content-Type: application/json" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error')
+        echo "Error from Ollama: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.message.content'
+}
+
+call_custom() {
+    local user_prompt="$1"
+    local model="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}"
+    local payload
+    payload=$(jq -n \
+        --arg model "$model" \
+        --arg content "$SYSTEM_PROMPT" \
+        --arg prompt "$user_prompt" \
+        '{
+            model: $model,
+            messages: [
+                {role: "system",   content: $content},
+                {role: "user",     content: $prompt}
+            ],
+            temperature: 0.7,
+            max_tokens: 2048
+        }')
+
+    local response
+    response=$(curl -s "$AICOMMIT_CUSTOM_API_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AICOMMIT_CUSTOM_API_KEY" \
+        -d "$payload")
+
+    if echo "$response" | jq -e '.error' &>/dev/null; then
+        local err_msg
+        err_msg=$(echo "$response" | jq -r '.error.message')
+        echo "Error from custom API: $err_msg" >&2
+        return 1
+    fi
+
+    echo "$response" | jq -r '.choices[0].message.content'
+}
+
+call_ai_provider() {
+    local diff_text="$1"
+    local user_prompt
+    user_prompt=$(build_user_prompt "$diff_text")
+
+    case "$PROVIDER" in
+        openai)    call_openai "$user_prompt" ;;
+        anthropic) call_anthropic "$user_prompt" ;;
+        gemini)    call_gemini "$user_prompt" ;;
+        groq)      call_groq "$user_prompt" ;;
+        ollama)    call_ollama "$user_prompt" ;;
+        custom)    call_custom "$user_prompt" ;;
+    esac
+}
 
 # ---------- Constants ----------
 MAX_CHAR_LIMIT=20000          # Approximate token limit accounting for OpenAI's token limit
@@ -334,54 +786,9 @@ if [[ -z $FULL_DIFF ]]; then
     exit 0
 fi
 
-echo "Analyzing changes and generating commit message..."
+echo "Analyzing changes and generating commit message (provider: $PROVIDER)..."
 
-# Build JSON payload (properly escaped via jq)
-JSON_PAYLOAD=$(jq -n \
-    --arg content "You are a helpful assistant that generates git commit messages following the Conventional Commits specification. Focus on the actual code changes to determine the type and scope. Keep the message concise but complete, under 50 characters for the first line if possible." \
-    --arg prompt "Generate a concise and descriptive git commit message for the following changes.
-Follow the conventional commits specification (https://www.conventionalcommits.org/).
-Use one of these types: feat, fix, docs, style, refactor, test, chore.
-
-Rules:
-1. Format first line as: <type>(<scope>): <description>
-2. The first line should be under 50 characters if possible
-3. After the first line, add a blank line and then bullet points for details
-4. Each bullet point should start with a hyphen
-5. Keep bullet points short and clear
-6. Focus on WHAT changed and WHY, not HOW
-
-Here are the changes:
-
-$FULL_DIFF" \
-    '{
-        model: "gpt-4o-mini",
-        messages: [
-            {role: "system",   content: $content},
-            {role: "user",     content: $prompt}
-        ],
-        temperature: 0.7,
-        max_tokens: 2048
-    }')
-
-# Call the OpenAI API
-RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d "$JSON_PAYLOAD")
-
-# ---- API error handling ----
-if echo "$RESPONSE" | jq -e '.error' >/dev/null; then
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message')
-    echo "Error from OpenAI API: $ERROR_MSG"
-    if [[ $ERROR_MSG == *tokens* || $ERROR_MSG == *max* || $ERROR_MSG == *too* ]]; then
-        echo "The diff is likely too large. Reduce changes or adjust MAX_CHAR_LIMIT."
-    fi
-    exit 1
-fi
-
-# Extract the generated commit message
-GENERATED_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+GENERATED_MSG=$(call_ai_provider "$FULL_DIFF") || exit 1
 GENERATED_MSG=$(echo "$GENERATED_MSG" | sed '/^```/d')   # strip possible fences
 
 # ---- User review ----

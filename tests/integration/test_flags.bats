@@ -23,6 +23,12 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "--changelog" ]]
 }
 
+@test "aicommit --provider flag exists" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--provider" ]]
+}
+
 @test "aicommit -h shows help" {
   run "$AICOMMIT_SCRIPT" -h
   [ "$status" -eq 0 ]
@@ -35,5 +41,17 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "-n" ]]
   [[ "$output" =~ "-y" ]]
   [[ "$output" =~ "-c" ]]
+  [[ "$output" =~ "-p" ]]
   [[ "$output" =~ "-h" ]]
+}
+
+@test "aicommit help lists supported providers" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "openai" ]]
+  [[ "$output" =~ "anthropic" ]]
+  [[ "$output" =~ "gemini" ]]
+  [[ "$output" =~ "groq" ]]
+  [[ "$output" =~ "ollama" ]]
+  [[ "$output" =~ "custom" ]]
 }

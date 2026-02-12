@@ -150,29 +150,112 @@ print_success "Installation complete!"
 echo "========================================"
 echo
 
-# Check for OPENAI_API_KEY
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-    print_info "OPENAI_API_KEY environment variable is not set"
+# ---------- Provider detection & selection ----------
+echo
+print_info "Detecting available AI providers..."
+echo
+
+CONFIG_FILE="$HOME/.aicommitrc"
+DETECTED_PROVIDERS=()
+DETECTED_LABELS=()
+
+if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    DETECTED_PROVIDERS+=("openai")
+    DETECTED_LABELS+=("OpenAI (OPENAI_API_KEY found)")
+fi
+
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    DETECTED_PROVIDERS+=("anthropic")
+    DETECTED_LABELS+=("Anthropic / Claude (ANTHROPIC_API_KEY found)")
+fi
+
+if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    DETECTED_PROVIDERS+=("gemini")
+    DETECTED_LABELS+=("Google Gemini (GEMINI_API_KEY found)")
+fi
+
+if [[ -n "${GROQ_API_KEY:-}" ]]; then
+    DETECTED_PROVIDERS+=("groq")
+    DETECTED_LABELS+=("Groq (GROQ_API_KEY found)")
+fi
+
+if command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null; then
+    DETECTED_PROVIDERS+=("ollama")
+    DETECTED_LABELS+=("Ollama (local server running)")
+elif command -v ollama &>/dev/null; then
+    DETECTED_PROVIDERS+=("ollama")
+    DETECTED_LABELS+=("Ollama (installed, server not running)")
+fi
+
+if [[ -n "${AICOMMIT_CUSTOM_API_URL:-}" && -n "${AICOMMIT_CUSTOM_API_KEY:-}" ]]; then
+    DETECTED_PROVIDERS+=("custom")
+    DETECTED_LABELS+=("Custom endpoint ($AICOMMIT_CUSTOM_API_URL)")
+fi
+
+if [[ ${#DETECTED_PROVIDERS[@]} -eq 0 ]]; then
+    print_info "No AI providers detected."
     echo
-    echo "To use aicommit, you need to set your OpenAI API key:"
+    echo "To use aicommit, set at least one provider API key:"
     echo
-    echo "  export OPENAI_API_KEY='your-api-key-here'"
+    echo "  export OPENAI_API_KEY='your-key'        # OpenAI"
+    echo "  export ANTHROPIC_API_KEY='your-key'      # Anthropic / Claude"
+    echo "  export GEMINI_API_KEY='your-key'          # Google Gemini"
+    echo "  export GROQ_API_KEY='your-key'            # Groq"
+    echo "  ollama pull llama3.2                       # Ollama (local)"
+    echo "  export AICOMMIT_CUSTOM_API_URL='url'      # Custom OpenAI-compatible endpoint"
+    echo "  export AICOMMIT_CUSTOM_API_KEY='key'"
     echo
-    echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.) to make it permanent:"
-    echo
-    echo "  echo 'export OPENAI_API_KEY=\"your-api-key-here\"' >> ~/.bashrc"
-    echo "  source ~/.bashrc"
+    echo "Add the export to your shell profile (~/.bashrc, ~/.zshrc) to make it permanent."
     echo
 else
-    print_success "OPENAI_API_KEY is already set"
+    echo "Detected AI providers:"
+    for i in "${!DETECTED_PROVIDERS[@]}"; do
+        echo "  $((i+1))) ${DETECTED_LABELS[$i]}"
+    done
+    echo
+
+    if [[ ${#DETECTED_PROVIDERS[@]} -eq 1 ]]; then
+        SELECTED_PROVIDER="${DETECTED_PROVIDERS[0]}"
+        print_success "Auto-selected: $SELECTED_PROVIDER (only provider available)"
+    else
+        # Check if stdin is a terminal (not piped)
+        if [[ -t 0 ]]; then
+            read -p "Select default provider [1-${#DETECTED_PROVIDERS[@]}]: " selection
+            if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= ${#DETECTED_PROVIDERS[@]} )); then
+                SELECTED_PROVIDER="${DETECTED_PROVIDERS[$((selection-1))]}"
+            else
+                SELECTED_PROVIDER="${DETECTED_PROVIDERS[0]}"
+                echo "Invalid selection. Defaulting to: $SELECTED_PROVIDER"
+            fi
+        else
+            SELECTED_PROVIDER="${DETECTED_PROVIDERS[0]}"
+            print_info "Non-interactive mode. Defaulting to: $SELECTED_PROVIDER"
+        fi
+    fi
+
+    # Write to config file
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # Update existing config
+        if grep -q '^AICOMMIT_PROVIDER=' "$CONFIG_FILE" 2>/dev/null; then
+            sed -i "s/^AICOMMIT_PROVIDER=.*/AICOMMIT_PROVIDER=$SELECTED_PROVIDER/" "$CONFIG_FILE"
+        else
+            echo "AICOMMIT_PROVIDER=$SELECTED_PROVIDER" >> "$CONFIG_FILE"
+        fi
+    else
+        echo "AICOMMIT_PROVIDER=$SELECTED_PROVIDER" > "$CONFIG_FILE"
+    fi
+
+    print_success "Default provider set to: $SELECTED_PROVIDER (saved to ~/.aicommitrc)"
+    echo
 fi
 
 echo "Usage:"
-echo "  aicommit              # Commit and push with AI-generated message"
-echo "  aicommit --no-push    # -n Commit only, don't push"
-echo "  aicommit --yes        # -y Non-interactive mode"
-echo "  aicommit --changelog  # -c Update CHANGELOG.md with this commit"
-echo "  aicommit --help       # -h Show help"
+echo "  aicommit                        # Commit and push with AI-generated message"
+echo "  aicommit --provider anthropic   # -p Use a specific provider for this run"
+echo "  aicommit --no-push              # -n Commit only, don't push"
+echo "  aicommit --yes                  # -y Non-interactive mode"
+echo "  aicommit --changelog            # -c Update CHANGELOG.md with this commit"
+echo "  aicommit --help                 # -h Show help"
 echo
 echo "You can also use:"
 echo "  git aicommit"

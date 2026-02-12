@@ -36,11 +36,20 @@ teardown() {
   [[ "$output" =~ "Analyzing changes" ]]
 }
 
-@test "aicommit requires OPENAI_API_KEY for commit" {
+@test "aicommit fails when no provider is configured" {
   unset OPENAI_API_KEY
+  unset ANTHROPIC_API_KEY
+  unset GEMINI_API_KEY
+  unset GROQ_API_KEY
+  unset AICOMMIT_PROVIDER
+  unset AICOMMIT_CUSTOM_API_URL
+  unset AICOMMIT_CUSTOM_API_KEY
+  rm -f "$HOME/.aicommitrc"
+  # Use a restricted PATH that excludes ollama so auto-detect won't find it
+  export PATH="/usr/bin:/bin"
   echo "test" > test.txt
   git add test.txt
   run "$AICOMMIT_SCRIPT" --yes --no-push
   [ "$status" -ne 0 ]
-  [[ "$output" =~ "OPENAI_API_KEY" ]]
+  [[ "$output" =~ "No AI provider" ]]
 }

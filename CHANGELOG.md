@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- add support for multiple AI providers (9ced39a)
 - update command usage descriptions (13bf9c8)
 - remove banner display from main flow (cf8e79e)
 
