@@ -1,17 +1,60 @@
 #!/usr/bin/env bash
 
-# ai_commit.sh
+# AI Commit - Generates conventional commit messages using AI
 # ----------------------------------------------------------------------
 # Generates a Conventional‑Commit message with OpenAI, lets the user
 # review/edit it, commits the changes and (optionally) pushes to the
 # remote repository.
 #
 # Usage:
-#   ./ai_commit.sh [--no-push|-n]        # commit and push (default)
-#   ./ai_commit.sh --no-push             # commit only, do NOT push
-#   ./ai_commit.sh -y|--yes              # non-interactive; auto-use generated message
-#   ./ai_commit.sh -h|--help             # show this help
+#   aicommit [--no-push|-n]        # commit and push (default)
+#   aicommit --no-push             # commit only, do NOT push
+#   aicommit -y|--yes              # non-interactive; auto-use generated message
+#   aicommit -h|--help             # show this help
+#   aicommit -V|--version          # show version information
 # ----------------------------------------------------------------------
+
+# Version information
+VERSION="1.0.3"
+
+# Display banner with rainbow-style ASCII art header
+show_banner() {
+    # Add some space from the top
+    echo ""
+    
+    # Blue sky color code
+    BLUE='\033[36m'
+    RESET='\033[0m'
+    local indent="  "
+    local art_width=87
+
+    center_under_art() {
+        local text="$1"
+        local len=${#text}
+        local pad=0
+
+        if (( art_width > len )); then
+            pad=$(( (art_width - len) / 2 ))
+        fi
+
+        printf "%s%*s%s\n" "$indent" "$pad" "" "$text"
+    }
+    
+    echo ""
+    # ASCII art with blue sky color
+    echo -e "${indent}${BLUE}████████╗ ██████╗          ██████╗   ██████╗  ███╗   ███╗ ███╗   ███╗ ██████╗ ████████╗${RESET}"
+    echo -e "${indent}${BLUE}██╔═══██║   ██╔═╝         ██╔═══██╗ ██╔═══██╗ ████╗ ████║ ████╗ ████║   ██╔═╝ ╚══██╔══╝${RESET}"
+    echo -e "${indent}${BLUE}██║█████║   ██║   ██████╗ ██║       ██║   ██║ ██╔████╔██║ ██╔████╔██║   ██║      ██║   ${RESET}"
+    echo -e "${indent}${BLUE}██║   ██║   ██║   ╚═════╝ ██║   ██║ ██║   ██║ ██║╚██╔╝██║ ██║╚██╔╝██║   ██║      ██║   ${RESET}"
+    echo -e "${indent}${BLUE}██║   ██║ ██████╗         ╚██████╔╝ ╚██████╔╝ ██║ ╚═╝ ██║ ██║ ╚═╝ ██║ ██████╗    ██║   ${RESET}"
+    echo -e "${indent}${BLUE}╚═╝   ╚═╝ ╚═════╝          ╚═════╝   ╚═════╝  ╚═╝     ╚═╝ ╚═╝     ╚═╝ ╚═════╝    ╚═╝   ${RESET}"
+    echo ""
+    # Centered version information
+    version_text="v${VERSION}"
+    center_under_art "$version_text"
+    center_under_art "Generate conventional commit messages using AI"
+    echo ""
+}
 
 set -euo pipefail
 
@@ -25,13 +68,19 @@ while (( "$#" )); do
         --no-push|-n)  NO_PUSH=true ;;
         --yes|-y)      ASSUME_YES=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
+        -V|--version)
+            show_banner
+            exit 0
+            ;;
         -h|--help)
-            echo "ai_commit.sh – generate an AI commit message, commit and push."
+            show_banner
+            echo "aicommit – generate an AI commit message, commit and push."
             echo
             echo "Options:"
             echo "  --no-push, -n      Do not push the commit to the remote."
             echo "  --yes, -y          Assume yes: auto-use the generated message and skip prompts."
             echo "  --changelog, -c    Update CHANGELOG.md with this commit."
+            echo "  -V, --version      Show version information."
             echo "  -h, --help         Show this help message."
             exit 0
             ;;
@@ -276,6 +325,9 @@ get_all_changes() {
         echo -e "$changes"
     fi
 }
+
+# Display banner
+show_banner
 
 # ---------- Main flow ----------
 FULL_DIFF=$(get_all_changes)
