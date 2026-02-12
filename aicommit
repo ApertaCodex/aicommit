@@ -326,9 +326,6 @@ get_all_changes() {
     fi
 }
 
-# Display banner
-show_banner
-
 # ---------- Main flow ----------
 FULL_DIFF=$(get_all_changes)
 
