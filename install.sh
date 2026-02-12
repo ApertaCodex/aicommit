@@ -169,9 +169,10 @@ fi
 
 echo "Usage:"
 echo "  aicommit              # Commit and push with AI-generated message"
-echo "  aicommit --no-push    # Commit only, don't push"
-echo "  aicommit --yes        # Non-interactive mode"
-echo "  aicommit --help       # Show help"
+echo "  aicommit --no-push    # -n Commit only, don't push"
+echo "  aicommit --yes        # -y Non-interactive mode"
+echo "  aicommit --changelog  # -c Update CHANGELOG.md with this commit"
+echo "  aicommit --help       # -h Show help"
 echo
 echo "You can also use:"
 echo "  git aicommit"
