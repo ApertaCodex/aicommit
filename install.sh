@@ -91,6 +91,19 @@ print_success "curl found"
 
 echo
 
+# Check for existing installation
+EXISTING_VERSION=""
+if command -v aicommit &>/dev/null; then
+    EXISTING_VERSION=$(aicommit --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' || true)
+    if [[ -n "$EXISTING_VERSION" ]]; then
+        print_info "Existing installation found: v${EXISTING_VERSION}"
+    else
+        print_info "Existing installation found (unknown version)"
+    fi
+else
+    print_info "No existing installation found"
+fi
+
 # Download or copy aicommit script
 if [[ "$REMOTE_INSTALL" == true ]]; then
     print_info "Downloading aicommit from GitHub..."
@@ -124,7 +137,21 @@ else
     $SUDO chmod +x "$INSTALL_DIR/aicommit"
 fi
 
-print_success "aicommit installed to $INSTALL_DIR/aicommit"
+# Display installed version
+INSTALLED_VERSION=$(grep -oP 'VERSION="\K[^"]+' "$INSTALL_DIR/aicommit" 2>/dev/null || true)
+if [[ -n "$INSTALLED_VERSION" ]]; then
+    if [[ -n "$EXISTING_VERSION" ]]; then
+        if [[ "$EXISTING_VERSION" == "$INSTALLED_VERSION" ]]; then
+            print_success "aicommit v${INSTALLED_VERSION} reinstalled (same version)"
+        else
+            print_success "aicommit upgraded: v${EXISTING_VERSION} → v${INSTALLED_VERSION}"
+        fi
+    else
+        print_success "aicommit v${INSTALLED_VERSION} installed to $INSTALL_DIR/aicommit"
+    fi
+else
+    print_success "aicommit installed to $INSTALL_DIR/aicommit"
+fi
 
 # Cleanup temp directory for remote installs
 if [[ "$REMOTE_INSTALL" == true ]]; then
