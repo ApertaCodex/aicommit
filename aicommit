@@ -700,10 +700,15 @@ do_release() {
                 initial_ver="$user_ver"
             fi
         fi
-        echo "Creating initial tag v${initial_ver}..."
-        git tag -a "v${initial_ver}" -m "Initial release v${initial_ver}"
-        latest_tag="v${initial_ver}"
-        echo -e "${C_GREEN}Created tag v${initial_ver}${C_RESET}"
+        if git rev-parse "v${initial_ver}" >/dev/null 2>&1; then
+            echo -e "${C_YELLOW}Tag v${initial_ver} already exists, using it as baseline.${C_RESET}"
+            latest_tag="v${initial_ver}"
+        else
+            echo "Creating initial tag v${initial_ver}..."
+            git tag -a "v${initial_ver}" -m "Initial release v${initial_ver}"
+            latest_tag="v${initial_ver}"
+            echo -e "${C_GREEN}Created tag v${initial_ver}${C_RESET}"
+        fi
         echo ""
     fi
 
