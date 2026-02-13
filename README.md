@@ -158,3 +158,5 @@ See [.github/workflows/](.github/workflows/) for workflow details.
 ## License
 
 MIT
+
+Built with ❤️ by [Moussa Mokhtari](https://github.com/Moussa-M)
