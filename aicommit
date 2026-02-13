@@ -687,8 +687,24 @@ do_release() {
     local latest_tag
     latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
     if [[ -z "$latest_tag" ]]; then
-        echo -e "${C_RED}Error:${C_RESET} No existing version tags found. Create an initial tag first (e.g., git tag -a v1.0.0 -m 'Initial release')."
-        exit 1
+        echo -e "${C_YELLOW}No existing version tags found.${C_RESET}"
+        local initial_ver="0.1.0"
+        if ! $ASSUME_YES; then
+            read -p "Enter initial version [${initial_ver}]: " user_ver
+            if [[ -n "$user_ver" ]]; then
+                user_ver="${user_ver#v}"
+                if ! [[ "$user_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo -e "${C_RED}Error:${C_RESET} Invalid version format. Use X.Y.Z"
+                    exit 1
+                fi
+                initial_ver="$user_ver"
+            fi
+        fi
+        echo "Creating initial tag v${initial_ver}..."
+        git tag -a "v${initial_ver}" -m "Initial release v${initial_ver}"
+        latest_tag="v${initial_ver}"
+        echo -e "${C_GREEN}Created tag v${initial_ver}${C_RESET}"
+        echo ""
     fi
 
     local current_ver="${latest_tag#v}"
