@@ -15,7 +15,7 @@
 #   aicommit -p|--provider <name>      # use a specific AI provider
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
 #   aicommit -h|--help                 # show this help
-#   aicommit -V|--version              # show version information
+#   aicommit -v|-V|--version            # show version information
 # ----------------------------------------------------------------------
 
 # Version information
@@ -87,7 +87,7 @@ show_help() {
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
     echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
-    echo -e "  ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}            Show version information."
+    echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
     echo
 
@@ -223,7 +223,7 @@ while (( "$#" )); do
                 shift
             fi
             ;;
-        -V|--version)
+        -v|-V|--version)
             show_banner
             exit 0
             ;;

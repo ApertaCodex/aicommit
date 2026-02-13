@@ -45,9 +45,19 @@ else
     mkdir -p "$SCRIPT_DIR"
 fi
 
-echo "========================================"
-echo "  AI Commit Installation"
-echo "========================================"
+BLUE='\033[36m'
+RESET='\033[0m'
+indent="  "
+
+echo ""
+echo -e "${indent}${BLUE}████████╗ ██████╗          ██████╗   ██████╗  ███╗   ███╗ ███╗   ███╗ ██████╗ ████████╗${RESET}"
+echo -e "${indent}${BLUE}██╔═══██║   ██╔═╝         ██╔═══██╗ ██╔═══██╗ ████╗ ████║ ████╗ ████║   ██╔═╝ ╚══██╔══╝${RESET}"
+echo -e "${indent}${BLUE}██║█████║   ██║   ██████╗ ██║       ██║   ██║ ██╔████╔██║ ██╔████╔██║   ██║      ██║   ${RESET}"
+echo -e "${indent}${BLUE}██║   ██║   ██║   ╚═════╝ ██║   ██║ ██║   ██║ ██║╚██╔╝██║ ██║╚██╔╝██║   ██║      ██║   ${RESET}"
+echo -e "${indent}${BLUE}██║   ██║ ██████╗         ╚██████╔╝ ╚██████╔╝ ██║ ╚═╝ ██║ ██║ ╚═╝ ██║ ██████╗    ██║   ${RESET}"
+echo -e "${indent}${BLUE}╚═╝   ╚═╝ ╚═════╝          ╚═════╝   ╚═════╝  ╚═╝     ╚═╝ ╚═╝     ╚═╝ ╚═════╝    ╚═╝   ${RESET}"
+echo ""
+echo -e "                                    ${GREEN}I N S T A L L E R${NC}"
 echo
 
 # Check prerequisites
@@ -145,9 +155,7 @@ else
 fi
 
 echo
-echo "========================================"
 print_success "Installation complete!"
-echo "========================================"
 echo
 
 # ---------- Provider detection & selection ----------
