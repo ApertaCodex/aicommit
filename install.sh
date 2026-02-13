@@ -255,6 +255,7 @@ echo "  aicommit --provider anthropic   # -p Use a specific provider for this ru
 echo "  aicommit --no-push              # -n Commit only, don't push"
 echo "  aicommit --yes                  # -y Non-interactive mode"
 echo "  aicommit --changelog            # -c Update CHANGELOG.md with this commit"
+echo "  aicommit --release patch        # -r Create a release (patch|minor|major|X.Y.Z)"
 echo "  aicommit --help                 # -h Show help"
 echo
 echo "You can also use:"
