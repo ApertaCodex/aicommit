@@ -42,7 +42,20 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "-y" ]]
   [[ "$output" =~ "-c" ]]
   [[ "$output" =~ "-p" ]]
+  [[ "$output" =~ "-r" ]]
   [[ "$output" =~ "-h" ]]
+}
+
+@test "aicommit --release flag exists" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--release" ]]
+}
+
+@test "aicommit -r flag exists in help" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "-r" ]]
 }
 
 @test "aicommit help lists supported providers" {

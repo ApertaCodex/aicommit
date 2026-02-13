@@ -13,6 +13,7 @@
 #   aicommit --no-push                 # commit only, do NOT push
 #   aicommit -y|--yes                  # non-interactive; auto-use generated message
 #   aicommit -p|--provider <name>      # use a specific AI provider
+#   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
 #   aicommit -h|--help                 # show this help
 #   aicommit -V|--version              # show version information
 # ----------------------------------------------------------------------
@@ -85,6 +86,8 @@ show_help() {
     echo -e "  ${C_GREEN}--no-push${C_RESET},  ${C_GREEN}-n${C_RESET}          Do not push the commit to the remote."
     echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
+    echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
+    echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
     echo -e "  ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}            Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
     echo
@@ -197,6 +200,8 @@ NO_PUSH=false
 ASSUME_YES=false
 UPDATE_CHANGELOG=false
 CLI_PROVIDER=""
+RELEASE_MODE=false
+RELEASE_ARG=""
 
 while (( "$#" )); do
     case "$1" in
@@ -211,6 +216,13 @@ while (( "$#" )); do
                 exit 1
             fi
             CLI_PROVIDER="$1"
+            ;;
+        --release|-r)
+            RELEASE_MODE=true
+            if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+                RELEASE_ARG="$2"
+                shift
+            fi
             ;;
         -V|--version)
             show_banner
@@ -563,6 +575,258 @@ call_ai_provider() {
     esac
 }
 
+# ---------- Release helpers ----------
+
+RELEASE_SYSTEM_PROMPT="You are a semantic versioning assistant. You analyze git commit messages and determine the appropriate version bump according to Semantic Versioning (semver.org) and Conventional Commits.
+
+Rules:
+- MAJOR: commits with 'BREAKING CHANGE' in footer/body, or '!' after type/scope (e.g., 'feat!:', 'fix(api)!:')
+- MINOR: commits with type 'feat' (new features)
+- PATCH: commits with type 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'chore', or any other type
+
+Respond with ONLY one word: major, minor, or patch. Nothing else."
+
+ai_detect_bump() {
+    local commits="$1"
+    local current_version="$2"
+    local user_prompt="Analyze these commit messages and determine the version bump type:
+
+$commits
+
+Current version: $current_version
+
+Respond with exactly one word: major, minor, or patch"
+
+    local saved_system="$SYSTEM_PROMPT"
+    SYSTEM_PROMPT="$RELEASE_SYSTEM_PROMPT"
+
+    local result
+    case "$PROVIDER" in
+        openai)    result=$(call_openai "$user_prompt") ;;
+        anthropic) result=$(call_anthropic "$user_prompt") ;;
+        gemini)    result=$(call_gemini "$user_prompt") ;;
+        groq)      result=$(call_groq "$user_prompt") ;;
+        ollama)    result=$(call_ollama "$user_prompt") ;;
+        custom)    result=$(call_custom "$user_prompt") ;;
+    esac
+
+    SYSTEM_PROMPT="$saved_system"
+
+    result=$(echo "$result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+    if [[ "$result" != "major" && "$result" != "minor" && "$result" != "patch" ]]; then
+        echo "Error: AI returned unexpected bump type: '$result'" >&2
+        return 1
+    fi
+    echo "$result"
+}
+
+do_release() {
+    local script_path
+    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    # Must be in a git repo
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo "Error: Not inside a git repository."
+        exit 1
+    fi
+
+    # Must be on main branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    if [[ "$current_branch" != "main" ]]; then
+        echo -e "${C_RED}Error:${C_RESET} Releases must be created from the ${C_BOLD}main${C_RESET} branch."
+        echo "  Current branch: $current_branch"
+        exit 1
+    fi
+
+    # If there are uncommitted changes, run the normal commit flow first
+    if ! git diff-index --quiet HEAD -- 2>/dev/null || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+        echo -e "${C_CYAN}Uncommitted changes detected. Running commit flow first...${C_RESET}"
+        echo ""
+
+        local full_diff
+        full_diff=$(get_all_changes)
+        if [[ -z "$full_diff" ]]; then
+            echo "No changes detected."
+        else
+            echo "Analyzing changes and generating commit message (provider: $PROVIDER)..."
+            local gen_msg
+            gen_msg=$(call_ai_provider "$full_diff") || exit 1
+            gen_msg=$(echo "$gen_msg" | sed '/^```/d')
+
+            echo -e "\nAI-generated commit message:"
+            echo "--------------------------------"
+            echo -e "$gen_msg"
+            echo "--------------------------------"
+
+            local final_msg="$gen_msg"
+            if ! $ASSUME_YES; then
+                read -p "Use this commit message? [Y/n/e] (Y = use, n = abort, e = edit): " choice
+                choice=$(echo "$choice" | tr '[:upper:]' '[:lower:]')
+                case "$choice" in
+                    n) echo "Release aborted."; exit 0 ;;
+                    e)
+                        local tmpfile
+                        tmpfile=$(mktemp /tmp/commit_msg.XXXXXX)
+                        echo "$gen_msg" > "$tmpfile"
+                        ${EDITOR:-nano} "$tmpfile"
+                        final_msg=$(<"$tmpfile")
+                        rm -f "$tmpfile"
+                        ;;
+                    *) final_msg="$gen_msg" ;;
+                esac
+            fi
+
+            git add -A
+            git commit -m "$final_msg"
+            echo -e "\n${C_GREEN}Changes committed.${C_RESET}"
+            echo ""
+        fi
+    fi
+
+    # Get latest tag
+    local latest_tag
+    latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    if [[ -z "$latest_tag" ]]; then
+        echo -e "${C_RED}Error:${C_RESET} No existing version tags found. Create an initial tag first (e.g., git tag -a v1.0.0 -m 'Initial release')."
+        exit 1
+    fi
+
+    local current_ver="${latest_tag#v}"
+    if ! [[ "$current_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        echo -e "${C_RED}Error:${C_RESET} Latest tag '$latest_tag' is not valid semver."
+        exit 1
+    fi
+
+    local cur_major="${BASH_REMATCH[1]}"
+    local cur_minor="${BASH_REMATCH[2]}"
+    local cur_patch="${BASH_REMATCH[3]}"
+
+    local bump_type=""
+    local next_version=""
+
+    if [[ -z "$RELEASE_ARG" ]]; then
+        # AI auto-detect
+        local commits
+        commits=$(git log "${latest_tag}..HEAD" --pretty=format:"%s" 2>/dev/null)
+        if [[ -z "$commits" ]]; then
+            echo -e "${C_RED}Error:${C_RESET} No new commits since ${latest_tag}."
+            exit 1
+        fi
+        local commit_count
+        commit_count=$(echo "$commits" | wc -l)
+        echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER)..."
+        bump_type=$(ai_detect_bump "$commits" "$current_ver") || exit 1
+    elif [[ "$RELEASE_ARG" =~ ^(patch|minor|major)$ ]]; then
+        bump_type="$RELEASE_ARG"
+    elif [[ "$RELEASE_ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        next_version="$RELEASE_ARG"
+        bump_type="explicit"
+    else
+        echo -e "${C_RED}Error:${C_RESET} Invalid release argument '$RELEASE_ARG'."
+        echo "  Usage: aicommit --release [patch|minor|major|X.Y.Z]"
+        exit 1
+    fi
+
+    # Calculate next version if not explicit
+    if [[ -z "$next_version" ]]; then
+        case "$bump_type" in
+            major) next_version="$((cur_major + 1)).0.0" ;;
+            minor) next_version="${cur_major}.$((cur_minor + 1)).0" ;;
+            patch) next_version="${cur_major}.${cur_minor}.$((cur_patch + 1))" ;;
+        esac
+    fi
+
+    # Count commits since last tag
+    local commit_count
+    commit_count=$(git rev-list "${latest_tag}..HEAD" --count 2>/dev/null || echo "0")
+
+    # Show release plan
+    echo ""
+    echo -e "${C_BOLD}${C_CYAN}Release Plan:${C_RESET}"
+    echo "  -----------------------------------------------"
+    echo -e "  Current version: ${C_BOLD}${current_ver}${C_RESET} (${latest_tag})"
+    echo -e "  New version:     ${C_BOLD}${C_GREEN}${next_version}${C_RESET}"
+    echo -e "  Bump type:       ${C_BOLD}${bump_type}${C_RESET}"
+    echo -e "  Changes since ${latest_tag}: ${commit_count} commit(s)"
+    echo "  -----------------------------------------------"
+    echo ""
+
+    if ! $ASSUME_YES; then
+        read -p "Proceed with release v${next_version}? [Y/n] " reply
+        reply=$(echo "$reply" | tr '[:upper:]' '[:lower:]')
+        if [[ "$reply" == "n" ]]; then
+            echo "Release cancelled."
+            exit 0
+        fi
+    fi
+
+    # 1. Update VERSION in the aicommit script
+    echo "Updating VERSION to ${next_version} in aicommit..."
+    sed -i "s/^VERSION=\".*\"/VERSION=\"${next_version}\"/" "$script_path"
+
+    # 2. Update CHANGELOG.md
+    local changelog_file="CHANGELOG.md"
+    local release_date
+    release_date=$(date +%Y-%m-%d)
+
+    if [[ -f "$changelog_file" ]]; then
+        if grep -A 10 "## \[Unreleased\]" "$changelog_file" | grep -q "^###"; then
+            echo "Updating CHANGELOG.md for v${next_version}..."
+            local backup="${changelog_file}.bak"
+            cp "$changelog_file" "$backup"
+
+            local unreleased_content
+            unreleased_content=$(awk '
+                /## \[Unreleased\]/ { in_unreleased=1; next }
+                /## \[/ { in_unreleased=0 }
+                in_unreleased && /^###/ { print; getline; while(/^-/) { print; if(getline <= 0) break } }
+            ' "$changelog_file")
+
+            if [[ -n "$unreleased_content" ]]; then
+                awk -v version="$next_version" -v date="$release_date" -v content="$unreleased_content" '
+                    /## \[Unreleased\]/ {
+                        print
+                        print ""
+                        print "## [" version "] - " date
+                        print content
+                        in_unreleased=1
+                        next
+                    }
+                    in_unreleased && /^## \[/ {
+                        in_unreleased=0
+                    }
+                    !in_unreleased { print }
+                ' "$backup" > "$changelog_file"
+            fi
+            rm -f "$backup"
+        else
+            echo "No unreleased changes in CHANGELOG.md. Skipping CHANGELOG update."
+        fi
+    fi
+
+    # 3. Commit the release
+    echo "Committing release v${next_version}..."
+    git add -A
+    git commit -m "chore(release): v${next_version}" || true
+
+    # 4. Create annotated tag
+    echo "Creating tag v${next_version}..."
+    git tag -a "v${next_version}" -m "Release v${next_version}"
+
+    # 5. Push commit + tag
+    echo "Pushing to origin..."
+    git push origin main
+    git push origin "v${next_version}"
+
+    echo ""
+    echo -e "${C_GREEN}${C_BOLD}Release v${next_version} complete!${C_RESET}"
+    echo ""
+    echo "GitHub Actions will now build and publish the release."
+    echo "Monitor progress at:"
+    echo -e "  ${C_CYAN}https://github.com/ApertaCodex/aicommit/actions${C_RESET}"
+}
+
 # ---------- Constants ----------
 MAX_CHAR_LIMIT=20000          # Approximate token limit accounting for OpenAI's token limit
 MAX_FILE_CHAR_LIMIT=2000      # Character limit per file content
@@ -779,6 +1043,13 @@ get_all_changes() {
 }
 
 # ---------- Main flow ----------
+
+# If release mode, run release flow and exit
+if $RELEASE_MODE; then
+    do_release
+    exit 0
+fi
+
 FULL_DIFF=$(get_all_changes)
 
 if [[ -z $FULL_DIFF ]]; then
