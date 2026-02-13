@@ -815,15 +815,35 @@ do_release() {
 
     # 5. Push commit + tag
     echo "Pushing to origin..."
-    git push origin main
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    git push origin "$current_branch"
     git push origin "v${next_version}"
+
+    # 6. Create GitHub Release if gh CLI is available
+    if command -v gh &>/dev/null; then
+        echo "Creating GitHub Release..."
+        local release_notes=""
+        if [[ -f "$changelog_file" ]]; then
+            release_notes=$(sed -n "/## \[${next_version}\]/,/## \[/p" "$changelog_file" | sed '1d;$d' | sed '/^$/d')
+        fi
+        if [[ -n "$release_notes" ]]; then
+            gh release create "v${next_version}" \
+                --title "v${next_version}" \
+                --notes "$release_notes" 2>/dev/null \
+                && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
+                || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
+        else
+            gh release create "v${next_version}" \
+                --title "v${next_version}" \
+                --generate-notes 2>/dev/null \
+                && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
+                || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
+        fi
+    fi
 
     echo ""
     echo -e "${C_GREEN}${C_BOLD}Release v${next_version} complete!${C_RESET}"
-    echo ""
-    echo "GitHub Actions will now build and publish the release."
-    echo "Monitor progress at:"
-    echo -e "  ${C_CYAN}https://github.com/ApertaCodex/aicommit/actions${C_RESET}"
 }
 
 # ---------- Constants ----------
