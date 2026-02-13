@@ -619,10 +619,63 @@ Respond with exactly one word: major, minor, or patch"
     echo "$result"
 }
 
-do_release() {
-    local script_path
-    script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+update_project_version() {
+    local next_version="$1"
+    local updated=false
 
+    # package.json
+    if [[ -f "package.json" ]]; then
+        echo "Updating package.json to ${next_version}..."
+        if command -v npm &>/dev/null; then
+            npm version "$next_version" --no-git-tag-version &>/dev/null
+        else
+            sed -i "s/\"version\": \".*\"/\"version\": \"${next_version}\"/" package.json
+        fi
+        updated=true
+    fi
+
+    # VERSION file
+    if [[ -f "VERSION" ]]; then
+        echo "Updating VERSION file to ${next_version}..."
+        echo "$next_version" > VERSION
+        updated=true
+    fi
+
+    # version.ts / version.js (common patterns)
+    for vfile in lib/version.ts lib/version.js src/version.ts src/version.js; do
+        if [[ -f "$vfile" ]]; then
+            if grep -qE '(APP_VERSION|VERSION|version)\s*=\s*"' "$vfile"; then
+                echo "Updating ${vfile} to ${next_version}..."
+                sed -i -E "s/(APP_VERSION|VERSION|version)(\s*=\s*)\"[^\"]+\"/\1\2\"${next_version}\"/" "$vfile"
+                updated=true
+            fi
+        fi
+    done
+
+    # pyproject.toml
+    if [[ -f "pyproject.toml" ]]; then
+        if grep -q '^version\s*=' pyproject.toml; then
+            echo "Updating pyproject.toml to ${next_version}..."
+            sed -i "s/^version\s*=\s*\".*\"/version = \"${next_version}\"/" pyproject.toml
+            updated=true
+        fi
+    fi
+
+    # Cargo.toml (first version = line only, under [package])
+    if [[ -f "Cargo.toml" ]]; then
+        if sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -q '^version\s*='; then
+            echo "Updating Cargo.toml to ${next_version}..."
+            sed -i "0,/^version\s*=\s*\".*\"/{s/^version\s*=\s*\".*\"/version = \"${next_version}\"/}" Cargo.toml
+            updated=true
+        fi
+    fi
+
+    if ! $updated; then
+        echo -e "${C_YELLOW}Warning: No version files found in current project to update.${C_RESET}"
+    fi
+}
+
+do_release() {
     # Must be in a git repo
     if ! git rev-parse --is-inside-work-tree &>/dev/null; then
         echo "Error: Not inside a git repository."
@@ -781,9 +834,8 @@ do_release() {
         fi
     fi
 
-    # 1. Update VERSION in the aicommit script
-    echo "Updating VERSION to ${next_version} in aicommit..."
-    sed -i "s/^VERSION=\".*\"/VERSION=\"${next_version}\"/" "$script_path"
+    # 1. Update version files in the current project
+    update_project_version "$next_version"
 
     # 2. Update CHANGELOG.md
     local changelog_file="CHANGELOG.md"
