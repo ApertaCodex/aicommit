@@ -69,7 +69,6 @@ C_RED='\033[31m'
 C_YELLOW='\033[33m'
 C_CYAN='\033[36m'
 C_WHITE='\033[37m'
-C_MAGENTA='\033[35m'
 
 # Status indicators
 STATUS_OK="${C_GREEN}●${C_RESET}"
@@ -109,7 +108,7 @@ show_help() {
         source_label="env AICOMMIT_PROVIDER"
     elif [[ -n "$cfg_default" ]]; then
         active_default="$cfg_default"
-        source_label="~/.aicommitrc"
+        source_label="$HOME/.aicommitrc"
     fi
 
     if [[ -n "$active_default" ]]; then
