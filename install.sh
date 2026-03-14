@@ -138,7 +138,7 @@ else
 fi
 
 # Display installed version
-INSTALLED_VERSION=$(grep -oP 'VERSION="\K[^"]+' "$INSTALL_DIR/aicommit" 2>/dev/null || true)
+INSTALLED_VERSION=$(grep -oP '^VERSION="\K[^"]+' "$INSTALL_DIR/aicommit" 2>/dev/null || true)
 if [[ -n "$INSTALLED_VERSION" ]]; then
     if [[ -n "$EXISTING_VERSION" ]]; then
         if [[ "$EXISTING_VERSION" == "$INSTALLED_VERSION" ]]; then
