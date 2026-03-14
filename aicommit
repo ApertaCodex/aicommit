@@ -619,6 +619,164 @@ Respond with exactly one word: major, minor, or patch"
     echo "$result"
 }
 
+detect_project_versions() {
+    local -n _sources=$1
+    local -n _versions=$2
+
+    # Git tag
+    local tag_ver
+    tag_ver=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    if [[ -n "$tag_ver" ]]; then
+        tag_ver="${tag_ver#v}"
+        if [[ "$tag_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _sources+=("git tag")
+            _versions+=("$tag_ver")
+        fi
+    fi
+
+    # package.json
+    if [[ -f "package.json" ]]; then
+        local pkg_ver
+        pkg_ver=$(grep -oP '"version"\s*:\s*"\K[^"]+' package.json 2>/dev/null || true)
+        if [[ "$pkg_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _sources+=("package.json")
+            _versions+=("$pkg_ver")
+        fi
+    fi
+
+    # VERSION file
+    if [[ -f "VERSION" ]]; then
+        local file_ver
+        file_ver=$(tr -d '[:space:]' < VERSION)
+        if [[ "$file_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _sources+=("VERSION")
+            _versions+=("$file_ver")
+        fi
+    fi
+
+    # version.ts / version.js
+    for vfile in lib/version.ts lib/version.js src/version.ts src/version.js; do
+        if [[ -f "$vfile" ]]; then
+            local v
+            v=$(grep -oP '(APP_VERSION|VERSION|version)\s*=\s*"\K[^"]+' "$vfile" 2>/dev/null || true)
+            if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                _sources+=("$vfile")
+                _versions+=("$v")
+            fi
+        fi
+    done
+
+    # pyproject.toml
+    if [[ -f "pyproject.toml" ]]; then
+        local py_ver
+        py_ver=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml 2>/dev/null || true)
+        if [[ "$py_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _sources+=("pyproject.toml")
+            _versions+=("$py_ver")
+        fi
+    fi
+
+    # Cargo.toml
+    if [[ -f "Cargo.toml" ]]; then
+        local cargo_ver
+        cargo_ver=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml 2>/dev/null | grep -oP '^version\s*=\s*"\K[^"]+' || true)
+        if [[ "$cargo_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _sources+=("Cargo.toml")
+            _versions+=("$cargo_ver")
+        fi
+    fi
+}
+
+semver_gt() {
+    local IFS='.'
+    local -a a=($1) b=($2)
+    for i in 0 1 2; do
+        if (( a[i] > b[i] )); then return 0; fi
+        if (( a[i] < b[i] )); then return 1; fi
+    done
+    return 1
+}
+
+highest_version() {
+    local best="$1"
+    shift
+    for v in "$@"; do
+        if semver_gt "$v" "$best"; then
+            best="$v"
+        fi
+    done
+    echo "$best"
+}
+
+CONSOLIDATED_VERSION=""
+
+consolidate_versions() {
+    CONSOLIDATED_VERSION=""
+    local sources=()
+    local versions=()
+    detect_project_versions sources versions
+
+    if [[ ${#versions[@]} -le 1 ]]; then
+        return 0
+    fi
+
+    # Check if all versions are the same
+    local first="${versions[0]}"
+    local all_same=true
+    for v in "${versions[@]:1}"; do
+        if [[ "$v" != "$first" ]]; then
+            all_same=false
+            break
+        fi
+    done
+
+    if $all_same; then
+        return 0
+    fi
+
+    # Versions differ - show them and prompt
+    echo ""
+    echo -e "${C_YELLOW}Version mismatch detected across project files:${C_RESET}"
+    echo "  -----------------------------------------------"
+    for i in "${!sources[@]}"; do
+        echo -e "  ${C_BOLD}${versions[$i]}${C_RESET}  ← ${sources[$i]}"
+    done
+    echo "  -----------------------------------------------"
+
+    local best
+    best=$(highest_version "${versions[@]}")
+
+    if ! $ASSUME_YES; then
+        echo ""
+        echo -e "  Recommended: use the highest version ${C_GREEN}${C_BOLD}${best}${C_RESET}"
+        read -p "  Consolidate all to v${best}? [Y/n/custom] " reply
+        reply=$(echo "$reply" | tr '[:upper:]' '[:lower:]')
+        if [[ "$reply" == "n" ]]; then
+            echo "  Skipping version consolidation."
+            return 0
+        elif [[ "$reply" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            best="$reply"
+        fi
+    fi
+
+    echo ""
+    echo -e "  Consolidating all version sources to ${C_GREEN}${C_BOLD}v${best}${C_RESET}..."
+    update_project_version "$best"
+
+    # Also update the git tag baseline if it was behind
+    local tag_ver
+    tag_ver=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    tag_ver="${tag_ver#v}"
+    if [[ -n "$tag_ver" && "$tag_ver" != "$best" ]]; then
+        echo -e "  ${C_YELLOW}Note:${C_RESET} Git tag is at v${tag_ver}. The new release will be based on v${best}."
+    fi
+
+    # Stage consolidated changes
+    git add -A 2>/dev/null || true
+
+    CONSOLIDATED_VERSION="$best"
+}
+
 update_project_version() {
     local next_version="$1"
     local updated=false
@@ -765,7 +923,19 @@ do_release() {
         echo ""
     fi
 
+    # Check for version mismatches across project files
+    consolidate_versions
+    
     local current_ver="${latest_tag#v}"
+    
+    # If consolidation produced a version higher than the tag, use it as baseline
+    if [[ -n "$CONSOLIDATED_VERSION" ]]; then
+        if semver_gt "$CONSOLIDATED_VERSION" "$current_ver"; then
+            current_ver="$CONSOLIDATED_VERSION"
+            echo -e "  Using consolidated version ${C_BOLD}v${current_ver}${C_RESET} as baseline for this release."
+        fi
+    fi
+
     if ! [[ "$current_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
         echo -e "${C_RED}Error:${C_RESET} Latest tag '$latest_tag' is not valid semver."
         exit 1
