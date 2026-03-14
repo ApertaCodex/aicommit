@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-03-14
 ### Added
 - Detect and update inline `VERSION="X.Y.Z"` in shell scripts and executables during release
-
 ## [1.9.0] - 2026-03-14
 
 ### Changed
