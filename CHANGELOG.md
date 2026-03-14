@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Detect and update inline `VERSION="X.Y.Z"` in shell scripts and executables during release
+
+## [1.9.0] - 2026-03-14
+
+### Changed
+- Update version to 1.8.1 (1a5e97b)
+
+## [1.8.0] - 2026-03-14
+
+### Added
+- Version consolidation: detect and reconcile mismatched versions across project files during release (3b7c99c)
+
+## [1.7.0] - 2026-02-13
+
+### Added
+- Show existing installation version during install (36446fd)
+
+## [1.6.0] - 2026-02-13
+
+### Added
+- Enhanced version update process with support for more project file types (63e12ec)
+
+### Security
+- Harden repo with pinned GitHub Actions, least-privilege permissions, and security policy (8e1f5ee)
+
+## [1.5.0] - 2026-02-13
+
+### Added
+- Author credit to README (ab5c2a8)
+
+## [1.4.0] - 2026-02-13
+
+### Added
+- Version flag in help message (7ef7e08)
+
+## [1.3.0] - 2026-02-13
+
+### Added
+- Auto-create initial tag when no version tags exist during release (3755946)
+- Handle existing tags during release (a78efc1)
+
+## [1.2.0] - 2026-02-13
+
+### Added
+- Create GitHub Release via gh CLI instead of relying on workflow (da9eba7)
+- `--release` flag to post-install usage output (da6e3a2)
+
+### Fixed
+- Resolve shellcheck warnings and release workflow failure (e03c0cc)
+
+### Changed
+- Remove auto-release workflow and determine-version script (6308bc5)
+
 ## [1.1.0] - 2026-02-13
 ### Added
 - add support for multiple AI providers (9ced39a)
