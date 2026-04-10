@@ -798,7 +798,8 @@ update_project_version() {
     if [[ -f "package.json" ]]; then
         echo "Updating package.json to ${next_version}..."
         if command -v npm &>/dev/null; then
-            npm version "$next_version" --no-git-tag-version &>/dev/null
+            npm version "$next_version" --no-git-tag-version &>/dev/null || \
+                sed -i "s/\"version\": \".*\"/\"version\": \"${next_version}\"/" package.json
         else
             sed -i "s/\"version\": \".*\"/\"version\": \"${next_version}\"/" package.json
         fi
@@ -978,13 +979,20 @@ do_release() {
         local commits
         commits=$(git log "${latest_tag}..HEAD" --pretty=format:"%s" 2>/dev/null)
         if [[ -z "$commits" ]]; then
-            echo -e "${C_RED}Error:${C_RESET} No new commits since ${latest_tag}."
-            exit 1
+            if [[ -n "$CONSOLIDATED_VERSION" ]]; then
+                next_version="$CONSOLIDATED_VERSION"
+                bump_type="explicit"
+                echo -e "  ${C_YELLOW}No new commits since ${latest_tag}; releasing consolidated version v${next_version}.${C_RESET}"
+            else
+                echo -e "${C_RED}Error:${C_RESET} No new commits since ${latest_tag}."
+                exit 1
+            fi
+        else
+            local commit_count
+            commit_count=$(echo "$commits" | wc -l)
+            echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER)..."
+            bump_type=$(ai_detect_bump "$commits" "$current_ver") || exit 1
         fi
-        local commit_count
-        commit_count=$(echo "$commits" | wc -l)
-        echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER)..."
-        bump_type=$(ai_detect_bump "$commits" "$current_ver") || exit 1
     elif [[ "$RELEASE_ARG" =~ ^(patch|minor|major)$ ]]; then
         bump_type="$RELEASE_ARG"
     elif [[ "$RELEASE_ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
