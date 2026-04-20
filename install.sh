@@ -24,13 +24,21 @@ print_info() {
     echo -e "${YELLOW}→ $1${NC}"
 }
 
-# Check if running as root
+# Determine install directory
+# Prefer /usr/local/bin; fall back to ~/.local/bin if not writable and sudo unavailable
 if [[ $EUID -eq 0 ]]; then
     INSTALL_DIR="/usr/local/bin"
     SUDO=""
-else
+elif [[ -w "/usr/local/bin" ]]; then
+    INSTALL_DIR="/usr/local/bin"
+    SUDO=""
+elif sudo -n true 2>/dev/null; then
     INSTALL_DIR="/usr/local/bin"
     SUDO="sudo"
+else
+    INSTALL_DIR="$HOME/.local/bin"
+    SUDO=""
+    mkdir -p "$INSTALL_DIR"
 fi
 
 # Determine if running from pipe (curl | bash) or locally
@@ -137,20 +145,27 @@ else
     $SUDO chmod +x "$INSTALL_DIR/aicommit"
 fi
 
-# Display installed version
-INSTALLED_VERSION=$(grep -oP '^VERSION="\K[^"]+' "$INSTALL_DIR/aicommit" 2>/dev/null || true)
+# Read version from the downloaded script (authoritative source)
+INSTALLED_VERSION=$(grep -oP '^VERSION="\K[^"]+' "$SCRIPT_DIR/aicommit" 2>/dev/null || true)
+
 if [[ -n "$INSTALLED_VERSION" ]]; then
-    if [[ -n "$EXISTING_VERSION" ]]; then
-        if [[ "$EXISTING_VERSION" == "$INSTALLED_VERSION" ]]; then
-            print_success "aicommit v${INSTALLED_VERSION} reinstalled (same version)"
-        else
-            print_success "aicommit upgraded: v${EXISTING_VERSION} → v${INSTALLED_VERSION}"
-        fi
+    if [[ -n "$EXISTING_VERSION" && "$EXISTING_VERSION" != "$INSTALLED_VERSION" ]]; then
+        print_success "aicommit upgraded: v${EXISTING_VERSION} → v${INSTALLED_VERSION}"
+    elif [[ -n "$EXISTING_VERSION" ]]; then
+        print_success "aicommit v${INSTALLED_VERSION} reinstalled (same version)"
     else
         print_success "aicommit v${INSTALLED_VERSION} installed to $INSTALL_DIR/aicommit"
     fi
 else
     print_success "aicommit installed to $INSTALL_DIR/aicommit"
+fi
+
+# Warn if ~/.local/bin is not in PATH
+if [[ "$INSTALL_DIR" == "$HOME/.local/bin" ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    echo ""
+    echo -e "${YELLOW}→ Note: $HOME/.local/bin is not in your PATH.${NC}"
+    echo "  Add this to your ~/.bashrc or ~/.zshrc:"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
 # Cleanup temp directory for remote installs
