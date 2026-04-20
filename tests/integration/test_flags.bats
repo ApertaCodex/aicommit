@@ -29,6 +29,12 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "--provider" ]]
 }
 
+@test "aicommit --model flag exists" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--model" ]]
+}
+
 @test "aicommit -h shows help" {
   run "$AICOMMIT_SCRIPT" -h
   [ "$status" -eq 0 ]
@@ -42,6 +48,7 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "-y" ]]
   [[ "$output" =~ "-c" ]]
   [[ "$output" =~ "-p" ]]
+  [[ "$output" =~ "-m" ]]
   [[ "$output" =~ "-r" ]]
   [[ "$output" =~ "-h" ]]
 }

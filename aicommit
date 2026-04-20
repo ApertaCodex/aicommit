@@ -13,6 +13,7 @@
 #   aicommit --no-push                 # commit only, do NOT push
 #   aicommit -y|--yes                  # non-interactive; auto-use generated message
 #   aicommit -p|--provider <name>      # use a specific AI provider
+#   aicommit -m|--model <name>         # optional model override for the chosen provider
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
 #   aicommit -h|--help                 # show this help
 #   aicommit -v|-V|--version            # show version information
@@ -82,6 +83,7 @@ show_help() {
     # --- Options ---
     echo -e "${C_BOLD}${C_CYAN}Options:${C_RESET}"
     echo -e "  ${C_GREEN}--provider${C_RESET}, ${C_GREEN}-p${C_RESET} ${C_DIM}<name>${C_RESET}  AI provider to use for this run."
+    echo -e "  ${C_GREEN}--model${C_RESET},    ${C_GREEN}-m${C_RESET} ${C_DIM}<name>${C_RESET}  Optional model override for the selected provider."
     echo -e "  ${C_GREEN}--no-push${C_RESET},  ${C_GREEN}-n${C_RESET}          Do not push the commit to the remote."
     echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
@@ -129,37 +131,44 @@ show_help() {
     echo -e "  ${C_DIM}STATUS  PROVIDER     MODEL                          ENV VAR${C_RESET}"
 
     # openai
+    local openai_model="${AICOMMIT_OPENAI_MODEL:-gpt-4o-mini}"
     if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        echo -e "  ${STATUS_OK}  ${C_BOLD}openai${C_RESET}       ${C_WHITE}gpt-4o-mini${C_RESET}                    ${C_GREEN}OPENAI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+        echo -e "  ${STATUS_OK}  ${C_BOLD}openai${C_RESET}       ${C_WHITE}${openai_model}${C_RESET}                    ${C_GREEN}OPENAI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
     else
-        echo -e "  ${STATUS_MISS}  openai       ${C_DIM}gpt-4o-mini${C_RESET}                    ${C_RED}OPENAI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+        echo -e "  ${STATUS_MISS}  openai       ${C_DIM}${openai_model}${C_RESET}                    ${C_RED}OPENAI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
     fi
 
     # anthropic
+    local anthropic_model="${AICOMMIT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
     if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        echo -e "  ${STATUS_OK}  ${C_BOLD}anthropic${C_RESET}    ${C_WHITE}claude-sonnet-4-20250514${C_RESET}       ${C_GREEN}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+        echo -e "  ${STATUS_OK}  ${C_BOLD}anthropic${C_RESET}    ${C_WHITE}${anthropic_model}${C_RESET}       ${C_GREEN}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
     else
-        echo -e "  ${STATUS_MISS}  anthropic    ${C_DIM}claude-sonnet-4-20250514${C_RESET}       ${C_RED}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+        echo -e "  ${STATUS_MISS}  anthropic    ${C_DIM}${anthropic_model}${C_RESET}       ${C_RED}ANTHROPIC_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
     fi
 
     # gemini
+    local gemini_model="${AICOMMIT_GEMINI_MODEL:-gemini-2.0-flash}"
     if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-        echo -e "  ${STATUS_OK}  ${C_BOLD}gemini${C_RESET}       ${C_WHITE}gemini-2.0-flash${C_RESET}              ${C_GREEN}GEMINI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+        echo -e "  ${STATUS_OK}  ${C_BOLD}gemini${C_RESET}       ${C_WHITE}${gemini_model}${C_RESET}              ${C_GREEN}GEMINI_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
     else
-        echo -e "  ${STATUS_MISS}  gemini       ${C_DIM}gemini-2.0-flash${C_RESET}              ${C_RED}GEMINI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+        echo -e "  ${STATUS_MISS}  gemini       ${C_DIM}${gemini_model}${C_RESET}              ${C_RED}GEMINI_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
     fi
 
     # groq
+    local groq_model="${AICOMMIT_GROQ_MODEL:-llama-3.3-70b-versatile}"
     if [[ -n "${GROQ_API_KEY:-}" ]]; then
-        echo -e "  ${STATUS_OK}  ${C_BOLD}groq${C_RESET}         ${C_WHITE}llama-3.3-70b-versatile${C_RESET}        ${C_GREEN}GROQ_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
+        echo -e "  ${STATUS_OK}  ${C_BOLD}groq${C_RESET}         ${C_WHITE}${groq_model}${C_RESET}        ${C_GREEN}GROQ_API_KEY${C_RESET} ${C_DIM}(set)${C_RESET}"
     else
-        echo -e "  ${STATUS_MISS}  groq         ${C_DIM}llama-3.3-70b-versatile${C_RESET}        ${C_RED}GROQ_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+        echo -e "  ${STATUS_MISS}  groq         ${C_DIM}${groq_model}${C_RESET}        ${C_RED}GROQ_API_KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
     fi
 
     # ollama
     if command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null; then
         local ollama_model
-        ollama_model=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // "none"' 2>/dev/null || echo "none")
+        ollama_model="${AICOMMIT_OLLAMA_MODEL:-}"
+        if [[ -z "$ollama_model" ]]; then
+            ollama_model=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // "none"' 2>/dev/null || echo "none")
+        fi
         echo -e "  ${STATUS_OK}  ${C_BOLD}ollama${C_RESET}       ${C_WHITE}${ollama_model}${C_RESET}    ${C_GREEN}server running${C_RESET}"
     elif command -v ollama &>/dev/null; then
         echo -e "  ${STATUS_WARN}  ollama       ${C_DIM}(auto-detect)${C_RESET}                  ${C_YELLOW}installed, server not running${C_RESET}"
@@ -168,11 +177,11 @@ show_help() {
     fi
 
     # custom
+    local custom_model="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}"
     if [[ -n "${AICOMMIT_CUSTOM_API_URL:-}" && -n "${AICOMMIT_CUSTOM_API_KEY:-}" ]]; then
-        local custom_model="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}"
         echo -e "  ${STATUS_OK}  ${C_BOLD}custom${C_RESET}       ${C_WHITE}${custom_model}${C_RESET}    ${C_GREEN}AICOMMIT_CUSTOM_API_URL${C_RESET} ${C_DIM}(set)${C_RESET}"
     else
-        echo -e "  ${STATUS_MISS}  custom       ${C_DIM}(configurable)${C_RESET}                 ${C_RED}AICOMMIT_CUSTOM_API_URL + _KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
+        echo -e "  ${STATUS_MISS}  custom       ${C_DIM}${custom_model}${C_RESET}                 ${C_RED}AICOMMIT_CUSTOM_API_URL + _KEY${C_RESET} ${C_DIM}(not set)${C_RESET}"
     fi
     echo
 
@@ -184,8 +193,8 @@ show_help() {
     echo -e "  ${C_DIM}# Set default provider${C_RESET}"
     echo -e "  echo '${C_YELLOW}AICOMMIT_PROVIDER${C_RESET}=openai' >> ~/.aicommitrc"
     echo -e ""
-    echo -e "  ${C_DIM}# Override provider for a single run${C_RESET}"
-    echo -e "  aicommit ${C_GREEN}--provider${C_RESET} anthropic"
+    echo -e "  ${C_DIM}# Override provider/model for a single run${C_RESET}"
+    echo -e "  aicommit ${C_GREEN}--provider${C_RESET} anthropic ${C_GREEN}--model${C_RESET} claude-3-5-sonnet-latest"
 }
 
 set -euo pipefail
@@ -199,6 +208,7 @@ NO_PUSH=false
 ASSUME_YES=false
 UPDATE_CHANGELOG=false
 CLI_PROVIDER=""
+CLI_MODEL=""
 RELEASE_MODE=false
 RELEASE_ARG=""
 
@@ -209,12 +219,20 @@ while (( "$#" )); do
         --changelog|-c) UPDATE_CHANGELOG=true ;;
         --provider|-p)
             shift
-            if [[ -z "${1:-}" ]]; then
+            if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
                 echo "Error: --provider requires a value."
                 echo "Valid providers: $VALID_PROVIDERS"
                 exit 1
             fi
             CLI_PROVIDER="$1"
+            ;;
+        --model|-m)
+            shift
+            if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
+                echo "Error: --model requires a value."
+                exit 1
+            fi
+            CLI_MODEL="$1"
             ;;
         --release|-r)
             RELEASE_MODE=true
@@ -278,6 +296,7 @@ detect_first_provider() {
 
 # ---------- Resolve provider ----------
 PROVIDER=""
+MODEL=""
 
 # 1. CLI flag
 if [[ -n "$CLI_PROVIDER" ]]; then
@@ -320,6 +339,21 @@ if ! echo "$VALID_PROVIDERS" | grep -qw "$PROVIDER"; then
     exit 1
 fi
 
+# Resolve model override precedence:
+# CLI --model > provider-specific env default > built-in default
+if [[ -n "$CLI_MODEL" ]]; then
+    MODEL="$CLI_MODEL"
+else
+    case "$PROVIDER" in
+        openai)    MODEL="${AICOMMIT_OPENAI_MODEL:-gpt-4o-mini}" ;;
+        anthropic) MODEL="${AICOMMIT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}" ;;
+        gemini)    MODEL="${AICOMMIT_GEMINI_MODEL:-gemini-2.0-flash}" ;;
+        groq)      MODEL="${AICOMMIT_GROQ_MODEL:-llama-3.3-70b-versatile}" ;;
+        ollama)    MODEL="${AICOMMIT_OLLAMA_MODEL:-}" ;;
+        custom)    MODEL="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}" ;;
+    esac
+fi
+
 # Validate provider has required credentials
 if ! provider_available "$PROVIDER"; then
     case "$PROVIDER" in
@@ -331,6 +365,15 @@ if ! provider_available "$PROVIDER"; then
         custom)    echo "Error: AICOMMIT_CUSTOM_API_URL and/or AICOMMIT_CUSTOM_API_KEY is not set." ;;
     esac
     exit 1
+fi
+
+# Resolve Ollama model if not explicitly set
+if [[ "$PROVIDER" == "ollama" && -z "$MODEL" ]]; then
+    MODEL=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // empty' 2>/dev/null || true)
+    if [[ -z "$MODEL" ]]; then
+        echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
+        exit 1
+    fi
 fi
 
 # ---------- Provider API functions ----------
@@ -358,12 +401,14 @@ EOF
 
 call_openai() {
     local user_prompt="$1"
+    local model="${MODEL:-${AICOMMIT_OPENAI_MODEL:-gpt-4o-mini}}"
     local payload
     payload=$(jq -n \
+        --arg model "$model" \
         --arg content "$SYSTEM_PROMPT" \
         --arg prompt "$user_prompt" \
         '{
-            model: "gpt-4o-mini",
+            model: $model,
             messages: [
                 {role: "system",   content: $content},
                 {role: "user",     content: $prompt}
@@ -390,12 +435,14 @@ call_openai() {
 
 call_anthropic() {
     local user_prompt="$1"
+    local model="${MODEL:-${AICOMMIT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}}"
     local payload
     payload=$(jq -n \
+        --arg model "$model" \
         --arg system "$SYSTEM_PROMPT" \
         --arg prompt "$user_prompt" \
         '{
-            model: "claude-sonnet-4-20250514",
+            model: $model,
             max_tokens: 2048,
             system: $system,
             messages: [
@@ -422,6 +469,7 @@ call_anthropic() {
 
 call_gemini() {
     local user_prompt="$1"
+    local model="${MODEL:-${AICOMMIT_GEMINI_MODEL:-gemini-2.0-flash}}"
     local combined_prompt="$SYSTEM_PROMPT
 
 $user_prompt"
@@ -439,7 +487,7 @@ $user_prompt"
         }')
 
     local response
-    response=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
+    response=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=$GEMINI_API_KEY" \
         -H "Content-Type: application/json" \
         -d "$payload")
 
@@ -455,12 +503,14 @@ $user_prompt"
 
 call_groq() {
     local user_prompt="$1"
+    local model="${MODEL:-${AICOMMIT_GROQ_MODEL:-llama-3.3-70b-versatile}}"
     local payload
     payload=$(jq -n \
+        --arg model "$model" \
         --arg content "$SYSTEM_PROMPT" \
         --arg prompt "$user_prompt" \
         '{
-            model: "llama-3.3-70b-versatile",
+            model: $model,
             messages: [
                 {role: "system",   content: $content},
                 {role: "user",     content: $prompt}
@@ -487,10 +537,12 @@ call_groq() {
 
 call_ollama() {
     local user_prompt="$1"
+    local model="${MODEL:-${AICOMMIT_OLLAMA_MODEL:-}}"
 
-    # Auto-detect the first available model
-    local model
-    model=$(curl -sf http://localhost:11434/api/tags | jq -r '.models[0].name // empty')
+    # Auto-detect the first available model if not provided
+    if [[ -z "$model" ]]; then
+        model=$(curl -sf http://localhost:11434/api/tags | jq -r '.models[0].name // empty')
+    fi
     if [[ -z "$model" ]]; then
         echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
         return 1
@@ -527,7 +579,7 @@ call_ollama() {
 
 call_custom() {
     local user_prompt="$1"
-    local model="${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}"
+    local model="${MODEL:-${AICOMMIT_CUSTOM_MODEL:-gpt-4o-mini}}"
     local payload
     payload=$(jq -n \
         --arg model "$model" \
@@ -885,7 +937,7 @@ do_release() {
         if [[ -z "$full_diff" ]]; then
             echo "No changes detected."
         else
-            echo "Analyzing changes and generating commit message (provider: $PROVIDER)..."
+            echo "Analyzing changes and generating commit message (provider: $PROVIDER, model: ${MODEL:-auto})..."
             local gen_msg
             gen_msg=$(call_ai_provider "$full_diff") || exit 1
             gen_msg=$(echo "$gen_msg" | sed '/^```/d')
@@ -990,7 +1042,7 @@ do_release() {
         else
             local commit_count
             commit_count=$(echo "$commits" | wc -l)
-            echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER)..."
+            echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER, model: ${MODEL:-auto})..."
             bump_type=$(ai_detect_bump "$commits" "$current_ver") || exit 1
         fi
     elif [[ "$RELEASE_ARG" =~ ^(patch|minor|major)$ ]]; then
@@ -1352,7 +1404,7 @@ if [[ -z $FULL_DIFF ]]; then
     exit 0
 fi
 
-echo "Analyzing changes and generating commit message (provider: $PROVIDER)..."
+echo "Analyzing changes and generating commit message (provider: $PROVIDER, model: ${MODEL:-auto})..."
 
 GENERATED_MSG=$(call_ai_provider "$FULL_DIFF") || exit 1
 GENERATED_MSG=$(echo "$GENERATED_MSG" | sed '/^```/d')   # strip possible fences

@@ -13,6 +13,12 @@ setup() {
   unset GEMINI_API_KEY
   unset GROQ_API_KEY
   unset AICOMMIT_PROVIDER
+  unset AICOMMIT_OPENAI_MODEL
+  unset AICOMMIT_ANTHROPIC_MODEL
+  unset AICOMMIT_GEMINI_MODEL
+  unset AICOMMIT_GROQ_MODEL
+  unset AICOMMIT_OLLAMA_MODEL
+  unset AICOMMIT_CUSTOM_MODEL
   unset AICOMMIT_CUSTOM_API_URL
   unset AICOMMIT_CUSTOM_API_KEY
   rm -f "$HOME/.aicommitrc"
@@ -38,6 +44,24 @@ teardown() {
   run "$AICOMMIT_SCRIPT" --provider
   [ "$status" -ne 0 ]
   [[ "$output" =~ "requires a value" ]]
+}
+
+@test "provider flag rejects missing value before another flag" {
+  run "$AICOMMIT_SCRIPT" --provider --yes
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "--provider requires a value" ]]
+}
+
+@test "model flag requires a value" {
+  run "$AICOMMIT_SCRIPT" --model
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "--model requires a value" ]]
+}
+
+@test "model flag rejects missing value before another flag" {
+  run "$AICOMMIT_SCRIPT" --model --yes
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "--model requires a value" ]]
 }
 
 @test "openai provider requires OPENAI_API_KEY" {
@@ -117,4 +141,29 @@ teardown() {
   git add test.txt
   run "$AICOMMIT_SCRIPT" --yes --no-push
   [[ "$output" =~ "provider: openai" ]]
+}
+
+@test "provider model default is shown in output" {
+  export OPENAI_API_KEY="test-key"
+  echo "test" > test.txt
+  git add test.txt
+  run "$AICOMMIT_SCRIPT" --provider openai --yes --no-push
+  [[ "$output" =~ "provider: openai, model: gpt-4o-mini" ]]
+}
+
+@test "CLI --model overrides provider default model" {
+  export OPENAI_API_KEY="test-key"
+  echo "test" > test.txt
+  git add test.txt
+  run "$AICOMMIT_SCRIPT" --provider openai --model gpt-4.1-mini --yes --no-push
+  [[ "$output" =~ "provider: openai, model: gpt-4.1-mini" ]]
+}
+
+@test "provider-specific model env var is used when --model is not set" {
+  export OPENAI_API_KEY="test-key"
+  export AICOMMIT_OPENAI_MODEL="gpt-4.1-mini"
+  echo "test" > test.txt
+  git add test.txt
+  run "$AICOMMIT_SCRIPT" --provider openai --yes --no-push
+  [[ "$output" =~ "provider: openai, model: gpt-4.1-mini" ]]
 }

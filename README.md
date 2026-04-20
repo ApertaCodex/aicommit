@@ -64,6 +64,8 @@ aicommit                    # Commit and push (default)
 aicommit -n / --no-push     # Commit without pushing
 aicommit -y / --yes         # Auto-accept generated message
 aicommit -c / --changelog   # Update CHANGELOG.md with commit
+aicommit -p groq            # Select provider for this run
+aicommit -p openai -m gpt-4o-mini   # Override provider model
 aicommit -y -n              # Combine options
 aicommit -c -y -n           # All options together
 
