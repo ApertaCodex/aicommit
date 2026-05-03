@@ -1,33 +1,26 @@
 {
   "todos": [
     {
-      "content": "Add --pull flag to usage header comment",
+      "content": "Create /var/www/devshub/aicommit/ directory and copy install.sh",
       "status": "completed",
-      "active_form": "Adding --pull flag to usage header comment",
-      "created_at": "2026-05-03T20:13:20.881753Z",
-      "updated_at": "2026-05-03T20:14:11.209546Z"
+      "active_form": "Creating aicommit directory and copying install.sh",
+      "created_at": "2026-05-03T20:41:17.303094Z",
+      "updated_at": "2026-05-03T20:44:20.057060Z"
     },
     {
-      "content": "Add --pull flag to show_help function",
+      "content": "Add nginx location block for /aicommit/ with auth_basic off",
       "status": "completed",
-      "active_form": "Adding --pull flag to show_help function",
-      "created_at": "2026-05-03T20:13:20.881753Z",
-      "updated_at": "2026-05-03T20:14:11.209546Z"
+      "active_form": "Adding nginx location block for /aicommit/",
+      "created_at": "2026-05-03T20:41:17.303094Z",
+      "updated_at": "2026-05-03T20:44:20.057060Z"
     },
     {
-      "content": "Add AUTO_PULL variable and argument parsing",
+      "content": "Reload nginx and test the URL",
       "status": "completed",
-      "active_form": "Adding AUTO_PULL variable and argument parsing",
-      "created_at": "2026-05-03T20:13:20.881753Z",
-      "updated_at": "2026-05-03T20:14:11.209546Z"
-    },
-    {
-      "content": "Add git pull --no-rebase logic before commit",
-      "status": "completed",
-      "active_form": "Adding git pull --no-rebase logic before commit",
-      "created_at": "2026-05-03T20:13:20.881753Z",
-      "updated_at": "2026-05-03T20:14:11.209546Z"
+      "active_form": "Reloading nginx and testing the URL",
+      "created_at": "2026-05-03T20:41:17.303094Z",
+      "updated_at": "2026-05-03T20:44:20.057060Z"
     }
   ],
-  "updated_at": "2026-05-03T20:14:11.209546Z"
+  "updated_at": "2026-05-03T20:44:20.057060Z"
 }
