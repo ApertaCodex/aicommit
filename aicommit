@@ -16,6 +16,7 @@
 #   aicommit -m|--model <name>         # optional model override for the chosen provider
 #   aicommit --pull                     # auto pull origin branch with --no-rebase before commit
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
+#   aicommit --update                   # update aicommit to the latest release
 #   aicommit -h|--help                 # show this help
 #   aicommit -v|-V|--version            # show version information
 # ----------------------------------------------------------------------
@@ -91,6 +92,7 @@ show_help() {
     echo -e "  ${C_GREEN}--pull${C_RESET}                    Auto pull from origin with --no-rebase before committing."
     echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
+    echo -e "  ${C_GREEN}--update${C_RESET}                  Update aicommit to the latest release from GitHub."
     echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
     echo
@@ -199,6 +201,87 @@ show_help() {
     echo -e "  aicommit ${C_GREEN}--provider${C_RESET} anthropic ${C_GREEN}--model${C_RESET} claude-3-5-sonnet-latest"
 }
 
+# ---------- Self-update ----------
+GITHUB_REPO="apertacodex/aicommit"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/aicommit"
+GITHUB_API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+
+self_update() {
+    echo -e "${C_CYAN}${C_BOLD}Checking for updates...${C_RESET}"
+
+    # Fetch latest release version from GitHub
+    local latest_version
+    latest_version=$(curl -sfL "$GITHUB_API_URL" | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//')
+
+    if [[ -z "$latest_version" ]]; then
+        echo -e "${C_RED}Error: Could not fetch the latest release from GitHub.${C_RESET}"
+        echo -e "${C_DIM}Check your network connection or try again later.${C_RESET}"
+        exit 1
+    fi
+
+    echo -e "  Installed version: ${C_BOLD}v${VERSION}${C_RESET}"
+    echo -e "  Latest version:    ${C_BOLD}v${latest_version}${C_RESET}"
+
+    # Compare versions
+    if [[ "$VERSION" == "$latest_version" ]]; then
+        echo -e "\n${C_GREEN}✅ You are already running the latest version.${C_RESET}"
+        exit 0
+    fi
+
+    echo -e "\n${C_YELLOW}⬆ New version available: v${latest_version}${C_RESET}"
+
+    # Find where the current binary lives
+    local current_bin
+    current_bin=$(command -v aicommit 2>/dev/null || true)
+
+    if [[ -z "$current_bin" ]]; then
+        echo -e "${C_RED}Error: Cannot locate the aicommit binary in PATH.${C_RESET}"
+        exit 1
+    fi
+
+    # Resolve symlinks to get the actual file
+    local actual_bin
+    if command -v readlink &>/dev/null; then
+        actual_bin=$(readlink -f "$current_bin" 2>/dev/null || echo "$current_bin")
+    else
+        actual_bin="$current_bin"
+    fi
+
+    echo -e "  Updating: ${C_DIM}${actual_bin}${C_RESET}"
+
+    # Download to a temp file first
+    local tmp_file
+    tmp_file=$(mktemp /tmp/aicommit-update-XXXXXX)
+
+    if ! curl -fsSL "$GITHUB_RAW_URL" -o "$tmp_file"; then
+        echo -e "${C_RED}Error: Failed to download the latest version.${C_RESET}"
+        rm -f "$tmp_file"
+        exit 1
+    fi
+
+    # Verify the download looks like the aicommit script
+    if ! head -1 "$tmp_file" | grep -q '#!/usr/bin/env bash'; then
+        echo -e "${C_RED}Error: Downloaded file does not appear to be a valid aicommit script.${C_RESET}"
+        rm -f "$tmp_file"
+        exit 1
+    fi
+
+    chmod +x "$tmp_file"
+
+    # Install — use sudo if we can't write to the target directly
+    if [[ -w "$actual_bin" ]]; then
+        mv "$tmp_file" "$actual_bin"
+    elif sudo -n true 2>/dev/null; then
+        sudo mv "$tmp_file" "$actual_bin"
+    else
+        echo -e "${C_YELLOW}Elevated permissions required to update ${actual_bin}${C_RESET}"
+        sudo mv "$tmp_file" "$actual_bin"
+    fi
+
+    echo -e "\n${C_GREEN}✅ Successfully updated aicommit: v${VERSION} → v${latest_version}${C_RESET}"
+    exit 0
+}
+
 set -euo pipefail
 
 # ---------- Provider constants ----------
@@ -244,6 +327,10 @@ while (( "$#" )); do
                 RELEASE_ARG="$2"
                 shift
             fi
+            ;;
+        --update)
+            show_banner
+            self_update
             ;;
         -v|-V|--version)
             show_banner
