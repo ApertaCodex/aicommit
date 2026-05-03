@@ -1,0 +1,33 @@
+{
+  "todos": [
+    {
+      "content": "Add --pull flag to usage header comment",
+      "status": "completed",
+      "active_form": "Adding --pull flag to usage header comment",
+      "created_at": "2026-05-03T20:13:20.881753Z",
+      "updated_at": "2026-05-03T20:14:11.209546Z"
+    },
+    {
+      "content": "Add --pull flag to show_help function",
+      "status": "completed",
+      "active_form": "Adding --pull flag to show_help function",
+      "created_at": "2026-05-03T20:13:20.881753Z",
+      "updated_at": "2026-05-03T20:14:11.209546Z"
+    },
+    {
+      "content": "Add AUTO_PULL variable and argument parsing",
+      "status": "completed",
+      "active_form": "Adding AUTO_PULL variable and argument parsing",
+      "created_at": "2026-05-03T20:13:20.881753Z",
+      "updated_at": "2026-05-03T20:14:11.209546Z"
+    },
+    {
+      "content": "Add git pull --no-rebase logic before commit",
+      "status": "completed",
+      "active_form": "Adding git pull --no-rebase logic before commit",
+      "created_at": "2026-05-03T20:13:20.881753Z",
+      "updated_at": "2026-05-03T20:14:11.209546Z"
+    }
+  ],
+  "updated_at": "2026-05-03T20:14:11.209546Z"
+}
