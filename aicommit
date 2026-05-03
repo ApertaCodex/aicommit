@@ -14,6 +14,7 @@
 #   aicommit -y|--yes                  # non-interactive; auto-use generated message
 #   aicommit -p|--provider <name>      # use a specific AI provider
 #   aicommit -m|--model <name>         # optional model override for the chosen provider
+#   aicommit --pull                     # auto pull origin branch with --no-rebase before commit
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
 #   aicommit -h|--help                 # show this help
 #   aicommit -v|-V|--version            # show version information
@@ -87,6 +88,7 @@ show_help() {
     echo -e "  ${C_GREEN}--no-push${C_RESET},  ${C_GREEN}-n${C_RESET}          Do not push the commit to the remote."
     echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
+    echo -e "  ${C_GREEN}--pull${C_RESET}                    Auto pull from origin with --no-rebase before committing."
     echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
     echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
@@ -209,6 +211,7 @@ ASSUME_YES=false
 UPDATE_CHANGELOG=false
 CLI_PROVIDER=""
 CLI_MODEL=""
+AUTO_PULL=false
 RELEASE_MODE=false
 RELEASE_ARG=""
 
@@ -216,6 +219,7 @@ while (( "$#" )); do
     case "$1" in
         --no-push|-n)  NO_PUSH=true ;;
         --yes|-y)      ASSUME_YES=true ;;
+        --pull)        AUTO_PULL=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
         --provider|-p)
             shift
@@ -1441,6 +1445,18 @@ echo -e "$FINAL_MSG"
 echo "--------------------------------"
 if ! $ASSUME_YES; then
     read -p "Press Enter to commit (Ctrl+C to abort) … "
+fi
+
+# ---- Auto pull (if requested) ----
+if $AUTO_PULL; then
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "Pulling from origin/$CURRENT_BRANCH with --no-rebase..."
+    if git pull --no-rebase origin "$CURRENT_BRANCH"; then
+        echo "✅ Pull completed successfully."
+    else
+        echo "⚠️ Pull failed. Please resolve conflicts and try again."
+        exit 1
+    fi
 fi
 
 # ---- Commit ----
