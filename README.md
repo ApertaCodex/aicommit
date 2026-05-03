@@ -7,6 +7,12 @@ Generate conventional commit messages using AI.
 ### Quick Install (Recommended)
 
 ```bash
+curl -fsSL https://devshub.ai/aicommit/install.sh | bash
+```
+
+Or via GitHub:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/apertacodex/aicommit/main/install.sh | bash
 ```
 
