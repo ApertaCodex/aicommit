@@ -1018,6 +1018,16 @@ do_release() {
         exit 1
     fi
 
+    # Pull first so version analysis and bump are based on latest remote state
+    if $AUTO_PULL; then
+        echo "Pulling from origin/$current_branch before release..."
+        if ! git pull --rebase origin "$current_branch"; then
+            echo -e "${C_RED}⚠️  Pull failed. Please resolve conflicts and try again.${C_RESET}"
+            exit 1
+        fi
+        echo "Pull completed."
+    fi
+
     # If there are uncommitted changes, run the normal commit flow first
     if ! git diff-index --quiet HEAD -- 2>/dev/null || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
         echo -e "${C_CYAN}Uncommitted changes detected. Running commit flow first...${C_RESET}"
@@ -1233,16 +1243,6 @@ do_release() {
     git tag -a "v${next_version}" -m "Release v${next_version}"
 
     # 5. Push commit + tag
-    local current_branch
-    current_branch=$(git rev-parse --abbrev-ref HEAD)
-    if $AUTO_PULL; then
-        echo "Pulling from origin/$current_branch with --no-rebase..."
-        if ! git pull --no-rebase origin "$current_branch"; then
-            echo "⚠️  Pull failed. Please resolve conflicts and try again."
-            exit 1
-        fi
-        echo "Pull completed successfully."
-    fi
     echo "Pushing to origin..."
     git push origin "$current_branch"
     git push origin "v${next_version}"
