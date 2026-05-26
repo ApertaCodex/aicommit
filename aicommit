@@ -1002,6 +1002,63 @@ update_project_version() {
     fi
 }
 
+generate_changelog_from_commits() {
+    local tag="$1"
+    local changelog_file="CHANGELOG.md"
+
+    if [[ ! -f "$changelog_file" ]]; then
+        cat > "$changelog_file" << 'CLEOF'
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+CLEOF
+    fi
+
+    local log
+    log=$(git log "${tag}..HEAD" --pretty=format:"%h %s" 2>/dev/null)
+    [[ -z "$log" ]] && return 0
+
+    local added="" fixed="" changed=""
+    local hash subject commit_type desc entry
+    while IFS= read -r line; do
+        hash="${line%% *}"
+        subject="${line#* }"
+        commit_type=$(echo "$subject" | grep -oP '^[a-z]+' || echo "chore")
+        desc=$(echo "$subject" | sed 's/^[a-z]\+[^:]*: //')
+        entry="- $desc ($hash)"
+        case "$commit_type" in
+            feat) added+="${entry}"$'\n' ;;
+            fix)  fixed+="${entry}"$'\n' ;;
+            *)    changed+="${entry}"$'\n' ;;
+        esac
+    done <<< "$log"
+
+    local insert=""
+    [[ -n "$added" ]]   && insert+="### Added"$'\n'"${added}"$'\n'
+    [[ -n "$fixed" ]]   && insert+="### Fixed"$'\n'"${fixed}"$'\n'
+    [[ -n "$changed" ]] && insert+="### Changed"$'\n'"${changed}"$'\n'
+    [[ -z "$insert" ]] && return 0
+
+    local temp_file
+    temp_file=$(mktemp)
+    awk -v section="$insert" '
+        /## \[Unreleased\]/ {
+            print
+            print ""
+            printf "%s", section
+            next
+        }
+        { print }
+    ' "$changelog_file" > "$temp_file"
+    mv "$temp_file" "$changelog_file"
+}
+
 do_release() {
     # Must be in a git repo
     if ! git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -1197,6 +1254,13 @@ do_release() {
     local changelog_file="CHANGELOG.md"
     local release_date
     release_date=$(date +%Y-%m-%d)
+
+    if $UPDATE_CHANGELOG; then
+        if [[ ! -f "$changelog_file" ]] || ! grep -A 20 "## \[Unreleased\]" "$changelog_file" 2>/dev/null | grep -q "^###"; then
+            echo "Generating changelog entries from commits since ${latest_tag}..."
+            generate_changelog_from_commits "$latest_tag"
+        fi
+    fi
 
     if [[ -f "$changelog_file" ]]; then
         if grep -A 10 "## \[Unreleased\]" "$changelog_file" | grep -q "^###"; then
