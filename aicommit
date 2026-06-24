@@ -16,6 +16,7 @@
 #   aicommit -m|--model <name>         # optional model override for the chosen provider
 #   aicommit --pull                     # auto pull origin branch with --no-rebase before commit
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
+#   aicommit --remap                    # AI-rediscover version files; regenerate .aicommit/bump-version.sh
 #   aicommit --update                   # update aicommit to the latest release
 #   aicommit -h|--help                 # show this help
 #   aicommit -v|-V|--version            # show version information
@@ -92,6 +93,8 @@ show_help() {
     echo -e "  ${C_GREEN}--pull${C_RESET}                    Auto pull from origin with --no-rebase before committing."
     echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
+    echo -e "  ${C_GREEN}--remap${C_RESET}                   Re-run AI version-file discovery and regenerate"
+    echo -e "                              ${C_DIM}.aicommit/bump-version.sh for this project.${C_RESET}"
     echo -e "  ${C_GREEN}--update${C_RESET}                  Update aicommit to the latest release from GitHub."
     echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
@@ -297,6 +300,7 @@ CLI_MODEL=""
 AUTO_PULL=false
 RELEASE_MODE=false
 RELEASE_ARG=""
+REMAP=false
 
 while (( "$#" )); do
     case "$1" in
@@ -304,6 +308,7 @@ while (( "$#" )); do
         --yes|-y)      ASSUME_YES=true ;;
         --pull)        AUTO_PULL=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
+        --remap)       REMAP=true ;;
         --provider|-p)
             shift
             if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
@@ -728,6 +733,22 @@ Rules:
 
 Respond with ONLY one word: major, minor, or patch. Nothing else."
 
+# Per-project, AI-generated version map + bump script (committed to the repo)
+AICOMMIT_DIR=".aicommit"
+VERSION_MAP_FILE="${AICOMMIT_DIR}/version-map.json"
+BUMP_SCRIPT_FILE="${AICOMMIT_DIR}/bump-version.sh"
+
+DISCOVERY_SYSTEM_PROMPT="You are a build-tooling assistant. You are given a list of 'path:line:content' matches where semantic-version-looking numbers appear in a project. Identify every location that holds THE PROJECT'S OWN version — the version that is incremented on each release.
+
+INCLUDE locations such as: a package.json \"version\" field, a VERSION file, the version under [package] in pyproject.toml or Cargo.toml, version constants in source code (e.g. VERSION=, __version__, APP_VERSION), and VERSION= assignments in shell scripts/executables.
+
+EXCLUDE: dependency/requirement versions, lockfiles, the project's CHANGELOG history, example/test fixtures, documentation samples, and any unrelated version-looking numbers.
+
+Respond with ONLY a compact JSON object, no markdown fences and no prose:
+{\"files\":[{\"path\":\"relative/path\",\"anchor\":\"short literal text on the version line\"}]}
+
+The 'anchor' must be a short literal substring that appears on the SAME line as the version and uniquely identifies it (e.g. 'VERSION=', '\"version\":', '__version__', 'version ='). It is used later to locate the line for replacement. If no project version exists, respond with {\"files\":[]}."
+
 ai_detect_bump() {
     local commits="$1"
     local current_version="$2"
@@ -762,6 +783,146 @@ Respond with exactly one word: major, minor, or patch"
     echo "$result"
 }
 
+# Ask the AI which files hold the project version. Prints a JSON object
+# {"files":[{"path":..,"anchor":..}]} on success; returns non-zero otherwise.
+ai_discover_version_files() {
+    local candidates
+    candidates=$(git grep -nE '[0-9]+\.[0-9]+\.[0-9]+' 2>/dev/null \
+        | grep -viE '(^|/)(CHANGELOG[^:]*|.*\.lock|package-lock\.json|yarn\.lock|composer\.lock):|node_modules/|(^|/)\.aicommit/' \
+        | head -300 || true)
+    if [[ -z "$candidates" ]]; then
+        echo "No version-like strings found in tracked files." >&2
+        return 1
+    fi
+
+    local user_prompt="Identify the project's own version location(s) from these matches:
+
+${candidates}
+
+Return the JSON now."
+
+    local saved_system="$SYSTEM_PROMPT"
+    SYSTEM_PROMPT="$DISCOVERY_SYSTEM_PROMPT"
+    local result
+    case "$PROVIDER" in
+        openai)    result=$(call_openai "$user_prompt") ;;
+        anthropic) result=$(call_anthropic "$user_prompt") ;;
+        gemini)    result=$(call_gemini "$user_prompt") ;;
+        groq)      result=$(call_groq "$user_prompt") ;;
+        ollama)    result=$(call_ollama "$user_prompt") ;;
+        custom)    result=$(call_custom "$user_prompt") ;;
+    esac
+    SYSTEM_PROMPT="$saved_system"
+
+    # Strip any markdown fences the model may add
+    result=$(echo "$result" | sed '/^```/d')
+    if ! echo "$result" | jq -e '.files | type == "array"' &>/dev/null; then
+        echo "Error: AI did not return valid version-file JSON." >&2
+        return 1
+    fi
+    echo "$result"
+}
+
+# Render the deterministic, project-specific bump script from a manifest JSON.
+generate_bump_script() {
+    local manifest="$1"
+    mkdir -p "$AICOMMIT_DIR"
+    echo "$manifest" > "$VERSION_MAP_FILE"
+
+    {
+        cat <<'HEADER'
+#!/usr/bin/env bash
+# Auto-generated by aicommit — do not edit by hand.
+# Regenerate after adding/removing version files with: aicommit --remap
+#
+# Increments THIS project's version across all known files.
+# Usage: .aicommit/bump-version.sh <new_version> [old_version]
+#   new_version  the version to write (with or without a leading 'v')
+#   old_version  optional; if given, only that exact version is replaced
+set -euo pipefail
+
+NEW="${1:?usage: bump-version.sh <new_version> [old_version]}"
+NEW="${NEW#v}"
+OLD="${2:-}"
+SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+
+# Run from the repo root (parent of this .aicommit directory)
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+bump_line() {
+    local file="$1" anchor="$2" esc
+    if [[ ! -f "$file" ]]; then
+        echo "  skip (missing): $file" >&2
+        return 0
+    fi
+    # Escape only ERE metacharacters so the literal anchor is a safe sed address
+    esc=$(printf '%s' "$anchor" | sed 's/[][\\^$.*+?(){}|]/\\&/g')
+    if [[ -n "$OLD" ]]; then
+        sed -i -E "/$esc/ s/${OLD//./\\.}/${NEW}/g" "$file"
+    else
+        sed -i -E "/$esc/ s/${SEMVER}/${NEW}/g" "$file"
+    fi
+    echo "  updated: $file" >&2
+}
+
+HEADER
+
+        echo "$manifest" | jq -r '.files[] | "bump_line " + (.path | @sh) + " " + (.anchor | @sh)'
+    } > "$BUMP_SCRIPT_FILE"
+
+    chmod +x "$BUMP_SCRIPT_FILE"
+}
+
+# Read the current version recorded at a manifest entry's anchored line.
+# The anchor is a literal substring, so match it with grep -F (no regex).
+read_manifest_version() {
+    local file="$1" anchor="$2"
+    [[ -f "$file" ]] || return 1
+    grep -F -- "$anchor" "$file" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+# Ensure a per-project version map + bump script exist. Runs AI discovery
+# (one call, cached afterwards) when missing or when --remap is given.
+# Returns 0 when a usable bump script is available, non-zero otherwise.
+ensure_version_map() {
+    if [[ "$REMAP" != "true" && -f "$BUMP_SCRIPT_FILE" && -f "$VERSION_MAP_FILE" ]]; then
+        return 0
+    fi
+
+    echo -e "${C_CYAN}Discovering version files with AI (provider: $PROVIDER, model: ${MODEL:-auto})...${C_RESET}" >&2
+    local manifest
+    if ! manifest=$(ai_discover_version_files); then
+        return 1
+    fi
+
+    local count
+    count=$(echo "$manifest" | jq '.files | length')
+    if [[ "$count" -eq 0 ]]; then
+        echo -e "${C_YELLOW}AI found no project version files.${C_RESET}" >&2
+        return 1
+    fi
+
+    echo "" >&2
+    echo -e "${C_BOLD}AI located these version locations:${C_RESET}" >&2
+    echo "$manifest" | jq -r '.files[] | "  • " + .path + "   (anchor: " + .anchor + ")"' >&2
+    echo "" >&2
+
+    if ! $ASSUME_YES; then
+        read -p "Save this map to ${VERSION_MAP_FILE} and generate ${BUMP_SCRIPT_FILE}? [Y/n] " reply
+        reply=$(echo "$reply" | tr '[:upper:]' '[:lower:]')
+        if [[ "$reply" == "n" ]]; then
+            echo "Skipping version-map generation." >&2
+            return 1
+        fi
+    fi
+
+    generate_bump_script "$manifest"
+    REMAP=false   # avoid re-discovering again within the same run
+    echo -e "${C_GREEN}✓ Generated ${BUMP_SCRIPT_FILE}${C_RESET}" >&2
+    return 0
+}
+
 detect_project_versions() {
     local -n _sources=$1
     local -n _versions=$2
@@ -775,6 +936,21 @@ detect_project_versions() {
             _sources+=("git tag")
             _versions+=("$tag_ver")
         fi
+    fi
+
+    # If a per-project version map exists, it is authoritative for files:
+    # read each recorded location and skip the built-in heuristics below.
+    if [[ -f "$VERSION_MAP_FILE" ]]; then
+        local mp ma mv
+        while IFS=$'\t' read -r mp ma; do
+            [[ -n "$mp" ]] || continue
+            mv=$(read_manifest_version "$mp" "$ma" || true)
+            if [[ "$mv" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                _sources+=("$mp")
+                _versions+=("$mv")
+            fi
+        done < <(jq -r '.files[] | [.path, .anchor] | @tsv' "$VERSION_MAP_FILE" 2>/dev/null)
+        return 0
     fi
 
     # package.json
@@ -937,6 +1113,16 @@ update_project_version() {
     local next_version="$1"
     local updated=false
 
+    # Preferred path: use the project-specific, AI-discovered bump script.
+    # ensure_version_map runs AI discovery once (then caches) when needed.
+    if ensure_version_map; then
+        echo "Bumping version to ${next_version} via ${BUMP_SCRIPT_FILE}..."
+        bash "$BUMP_SCRIPT_FILE" "$next_version"
+        return 0
+    fi
+
+    echo -e "${C_DIM}Using built-in version detectors...${C_RESET}"
+
     # package.json
     if [[ -f "package.json" ]]; then
         echo "Updating package.json to ${next_version}..."
@@ -1020,6 +1206,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 CLEOF
     fi
 
+    # Ensure [Unreleased] section exists before the first version entry
+    if ! grep -q "## \[Unreleased\]" "$changelog_file"; then
+        local temp_file
+        temp_file=$(mktemp)
+        awk '
+            !inserted && /^## \[/ {
+                print "## [Unreleased]"
+                print ""
+                inserted=1
+            }
+            { print }
+        ' "$changelog_file" > "$temp_file"
+        mv "$temp_file" "$changelog_file"
+    fi
+
     local log
     log=$(git log "${tag}..HEAD" --pretty=format:"%h %s" 2>/dev/null)
     [[ -z "$log" ]] && return 0
@@ -1075,16 +1276,6 @@ do_release() {
         exit 1
     fi
 
-    # Pull first so version analysis and bump are based on latest remote state
-    if $AUTO_PULL; then
-        echo "Pulling from origin/$current_branch before release..."
-        if ! git pull --rebase origin "$current_branch"; then
-            echo -e "${C_RED}⚠️  Pull failed. Please resolve conflicts and try again.${C_RESET}"
-            exit 1
-        fi
-        echo "Pull completed."
-    fi
-
     # If there are uncommitted changes, run the normal commit flow first
     if ! git diff-index --quiet HEAD -- 2>/dev/null || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
         echo -e "${C_CYAN}Uncommitted changes detected. Running commit flow first...${C_RESET}"
@@ -1128,6 +1319,16 @@ do_release() {
             echo -e "\n${C_GREEN}Changes committed.${C_RESET}"
             echo ""
         fi
+    fi
+
+    if $AUTO_PULL; then
+        echo "Pulling from origin/$current_branch with --no-rebase..."
+        if ! git pull --no-rebase origin "$current_branch"; then
+            echo -e "${C_RED}⚠️  Pull failed. Please resolve conflicts and try again.${C_RESET}"
+            exit 1
+        fi
+        echo "Pull completed."
+        echo ""
     fi
 
     # Get latest tag
@@ -1557,6 +1758,17 @@ get_all_changes() {
 # If release mode, run release flow and exit
 if $RELEASE_MODE; then
     do_release
+    exit 0
+fi
+
+# Standalone: rediscover version files and (re)generate the project bump script
+if $REMAP; then
+    if ensure_version_map; then
+        echo -e "${C_GREEN}✓ Version map ready at ${VERSION_MAP_FILE}${C_RESET}"
+    else
+        echo -e "${C_YELLOW}Version map was not generated.${C_RESET}"
+        exit 1
+    fi
     exit 0
 fi
 
