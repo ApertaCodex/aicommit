@@ -353,14 +353,6 @@ while (( "$#" )); do
     shift
 done
 
-# ---------- Incompatible flag checks ----------
-if $NO_PUSH && $RELEASE_MODE; then
-    echo -e "${C_RED}${C_BOLD}⛔ Error: --no-push cannot be combined with --release.${C_RESET}"
-    echo -e "${C_YELLOW}A release must push its commit, tag, and GitHub release to the remote.${C_RESET}"
-    echo -e "Drop ${C_BOLD}--no-push${C_RESET} to create the release, or drop ${C_BOLD}--release${C_RESET} to commit locally without pushing."
-    exit 1
-fi
-
 # ---------- Repository checks ----------
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
     echo "Error: Not inside a git repository."
@@ -1562,30 +1554,34 @@ do_release() {
     echo "Creating tag v${next_version}..."
     git tag -a "v${next_version}" -m "Release v${next_version}"
 
-    # 5. Push commit + tag
-    echo "Pushing to origin..."
-    git push origin "$current_branch"
-    git push origin "v${next_version}"
+    # 5. Push commit + tag (unless --no-push)
+    if $NO_PUSH; then
+        echo -e "${C_YELLOW}⚡️ Push skipped (--no-push). Commit and tag v${next_version} created locally only.${C_RESET}"
+    else
+        echo "Pushing to origin..."
+        git push origin "$current_branch"
+        git push origin "v${next_version}"
 
-    # 6. Create GitHub Release if gh CLI is available
-    if command -v gh &>/dev/null; then
-        echo "Creating GitHub Release..."
-        local release_notes=""
-        if [[ -f "$changelog_file" ]]; then
-            release_notes=$(sed -n "/## \[${next_version}\]/,/## \[/p" "$changelog_file" | sed '1d;$d' | sed '/^$/d')
-        fi
-        if [[ -n "$release_notes" ]]; then
-            gh release create "v${next_version}" \
-                --title "v${next_version}" \
-                --notes "$release_notes" 2>/dev/null \
-                && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
-                || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
-        else
-            gh release create "v${next_version}" \
-                --title "v${next_version}" \
-                --generate-notes 2>/dev/null \
-                && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
-                || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
+        # 6. Create GitHub Release if gh CLI is available
+        if command -v gh &>/dev/null; then
+            echo "Creating GitHub Release..."
+            local release_notes=""
+            if [[ -f "$changelog_file" ]]; then
+                release_notes=$(sed -n "/## \[${next_version}\]/,/## \[/p" "$changelog_file" | sed '1d;$d' | sed '/^$/d')
+            fi
+            if [[ -n "$release_notes" ]]; then
+                gh release create "v${next_version}" \
+                    --title "v${next_version}" \
+                    --notes "$release_notes" 2>/dev/null \
+                    && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
+                    || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
+            else
+                gh release create "v${next_version}" \
+                    --title "v${next_version}" \
+                    --generate-notes 2>/dev/null \
+                    && echo -e "${C_GREEN}GitHub Release created.${C_RESET}" \
+                    || echo -e "${C_YELLOW}Warning: GitHub Release creation failed. You can create it manually.${C_RESET}"
+            fi
         fi
     fi
 
