@@ -353,6 +353,14 @@ while (( "$#" )); do
     shift
 done
 
+# ---------- Incompatible flag checks ----------
+if $NO_PUSH && $RELEASE_MODE; then
+    echo -e "${C_RED}${C_BOLD}⛔ Error: --no-push cannot be combined with --release.${C_RESET}"
+    echo -e "${C_YELLOW}A release must push its commit, tag, and GitHub release to the remote.${C_RESET}"
+    echo -e "Drop ${C_BOLD}--no-push${C_RESET} to create the release, or drop ${C_BOLD}--release${C_RESET} to commit locally without pushing."
+    exit 1
+fi
+
 # ---------- Repository checks ----------
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
     echo "Error: Not inside a git repository."
