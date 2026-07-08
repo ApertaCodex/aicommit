@@ -23,7 +23,7 @@
 # ----------------------------------------------------------------------
 
 # Version information
-VERSION="1.19.0"
+VERSION="1.19.1"
 
 # Display banner with rainbow-style ASCII art header
 show_banner() {
