@@ -15,7 +15,7 @@
 #   aicommit -p|--provider <name>      # use a specific AI provider
 #   aicommit -m|--model <name>         # optional model override for the chosen provider
 #   aicommit --pull                     # auto pull origin branch with --no-rebase before commit
-#   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X.Y.Z, or auto
+#   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X, X.Y, X.Y.Z, or auto
 #   aicommit --remap                    # AI-rediscover version files; regenerate .aicommit/bump-version.sh
 #   aicommit --update                   # update aicommit to the latest release
 #   aicommit -h|--help                 # show this help
@@ -91,7 +91,7 @@ show_help() {
     echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
     echo -e "  ${C_GREEN}--pull${C_RESET}                    Auto pull from origin with --no-rebase before committing."
-    echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, or X.Y.Z."
+    echo -e "  ${C_GREEN}--release${C_RESET},   ${C_GREEN}-r${C_RESET} ${C_DIM}[type]${C_RESET}  Create a release. Type: patch, minor, major, X, X.Y, or X.Y.Z."
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
     echo -e "  ${C_GREEN}--remap${C_RESET}                   Re-run AI version-file discovery and regenerate"
     echo -e "                              ${C_DIM}.aicommit/bump-version.sh for this project.${C_RESET}"
@@ -732,7 +732,7 @@ call_ai_provider() {
 
 # ---------- Release helpers ----------
 
-RELEASE_SYSTEM_PROMPT="You are a semantic versioning assistant. You analyze git commit messages and determine the appropriate version bump according to Semantic Versioning (semver.org) and Conventional Commits.
+RELEASE_SYSTEM_PROMPT="You are a versioning assistant. You analyze git commit messages and determine the appropriate version bump according to Semantic Versioning (semver.org) and Conventional Commits. Versions may be X, X.Y, or X.Y.Z — preserve the component count of the current version.
 
 Rules:
 - MAJOR: commits with 'BREAKING CHANGE' in footer/body, or '!' after type/scope (e.g., 'feat!:', 'fix(api)!:')
@@ -746,7 +746,7 @@ AICOMMIT_DIR=".aicommit"
 VERSION_MAP_FILE="${AICOMMIT_DIR}/version-map.json"
 BUMP_SCRIPT_FILE="${AICOMMIT_DIR}/bump-version.sh"
 
-DISCOVERY_SYSTEM_PROMPT="You are a build-tooling assistant. You are given a list of 'path:line:content' matches where semantic-version-looking numbers appear in a project. Identify every location that holds THE PROJECT'S OWN version — the version that is incremented on each release.
+DISCOVERY_SYSTEM_PROMPT="You are a build-tooling assistant. You are given a list of 'path:line:content' matches where version-looking numbers appear in a project. Identify every location that holds THE PROJECT'S OWN version — the version that is incremented on each release. Versions may be X, X.Y, or X.Y.Z.
 
 INCLUDE locations such as: a package.json \"version\" field, a VERSION file, the version under [package] in pyproject.toml or Cargo.toml, version constants in source code (e.g. VERSION=, __version__, APP_VERSION), and VERSION= assignments in shell scripts/executables.
 
@@ -795,7 +795,7 @@ Respond with exactly one word: major, minor, or patch"
 # {"files":[{"path":..,"anchor":..}]} on success; returns non-zero otherwise.
 ai_discover_version_files() {
     local candidates
-    candidates=$(git grep -nE '[0-9]+\.[0-9]+\.[0-9]+' 2>/dev/null \
+    candidates=$(git grep -nE '[0-9]+(\.[0-9]+(\.[0-9]+)?)?' 2>/dev/null \
         | grep -viE '(^|/)(CHANGELOG[^:]*|.*\.lock|package-lock\.json|yarn\.lock|composer\.lock):|node_modules/|(^|/)\.aicommit/' \
         | head -300 || true)
     if [[ -z "$candidates" ]]; then
@@ -852,7 +852,7 @@ set -euo pipefail
 NEW="${1:?usage: bump-version.sh <new_version> [old_version]}"
 NEW="${NEW#v}"
 OLD="${2:-}"
-SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+SEMVER='[0-9]+(\.[0-9]+(\.[0-9]+)?)?'
 
 # Run from the repo root (parent of this .aicommit directory)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -887,7 +887,7 @@ HEADER
 read_manifest_version() {
     local file="$1" anchor="$2"
     [[ -f "$file" ]] || return 1
-    grep -F -- "$anchor" "$file" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    grep -F -- "$anchor" "$file" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+(\.[0-9]+)?)?' | head -1
 }
 
 # Ensure a per-project version map + bump script exist. Runs AI discovery
@@ -940,7 +940,7 @@ detect_project_versions() {
     tag_ver=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
     if [[ -n "$tag_ver" ]]; then
         tag_ver="${tag_ver#v}"
-        if [[ "$tag_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if validate_version "$tag_ver"; then
             _sources+=("git tag")
             _versions+=("$tag_ver")
         fi
@@ -953,7 +953,7 @@ detect_project_versions() {
         while IFS=$'\t' read -r mp ma; do
             [[ -n "$mp" ]] || continue
             mv=$(read_manifest_version "$mp" "$ma" || true)
-            if [[ "$mv" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if validate_version "$mv"; then
                 _sources+=("$mp")
                 _versions+=("$mv")
             fi
@@ -965,7 +965,7 @@ detect_project_versions() {
     if [[ -f "package.json" ]]; then
         local pkg_ver
         pkg_ver=$(grep -oP '"version"\s*:\s*"\K[^"]+' package.json 2>/dev/null || true)
-        if [[ "$pkg_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if validate_version "$pkg_ver"; then
             _sources+=("package.json")
             _versions+=("$pkg_ver")
         fi
@@ -975,7 +975,7 @@ detect_project_versions() {
     if [[ -f "VERSION" ]]; then
         local file_ver
         file_ver=$(tr -d '[:space:]' < VERSION)
-        if [[ "$file_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if validate_version "$file_ver"; then
             _sources+=("VERSION")
             _versions+=("$file_ver")
         fi
@@ -986,7 +986,7 @@ detect_project_versions() {
         if [[ -f "$vfile" ]]; then
             local v
             v=$(grep -oP '(APP_VERSION|VERSION|version)\s*=\s*"\K[^"]+' "$vfile" 2>/dev/null || true)
-            if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if validate_version "$v"; then
                 _sources+=("$vfile")
                 _versions+=("$v")
             fi
@@ -997,7 +997,7 @@ detect_project_versions() {
     if [[ -f "pyproject.toml" ]]; then
         local py_ver
         py_ver=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml 2>/dev/null || true)
-        if [[ "$py_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if validate_version "$py_ver"; then
             _sources+=("pyproject.toml")
             _versions+=("$py_ver")
         fi
@@ -1007,7 +1007,7 @@ detect_project_versions() {
     if [[ -f "Cargo.toml" ]]; then
         local cargo_ver
         cargo_ver=$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml 2>/dev/null | grep -oP '^version\s*=\s*"\K[^"]+' || true)
-        if [[ "$cargo_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if validate_version "$cargo_ver"; then
             _sources+=("Cargo.toml")
             _versions+=("$cargo_ver")
         fi
@@ -1019,22 +1019,71 @@ detect_project_versions() {
         [[ -f "$script_file" ]] || continue
         file "$script_file" 2>/dev/null | grep -q "text" || continue
         local sv
-        sv=$(grep -oP '^VERSION="\K[0-9]+\.[0-9]+\.[0-9]+(?=")' "$script_file" 2>/dev/null | head -1 || true)
-        if [[ "$sv" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        sv=$(grep -oP '^VERSION="\K[0-9]+(\.[0-9]+(\.[0-9]+)?)?(?=")' "$script_file" 2>/dev/null | head -1 || true)
+        if validate_version "$sv"; then
             _sources+=("$script_file")
             _versions+=("$sv")
         fi
     done < <(find . -maxdepth 2 \( -name "*.sh" -o -type f -executable \) -not -path './.git/*' -not -path './node_modules/*' -print0 2>/dev/null)
 }
 
+# Validate a version string: accepts X, X.Y, or X.Y.Z
+validate_version() {
+    [[ "$1" =~ ^[0-9]+(\.[0-9]+(\.[0-9]+)?)?$ ]]
+}
+
+# Parse a version into components, stored in a global array _ver_parts.
+# Also sets _ver_components to the count (1, 2, or 3).
+parse_version() {
+    local IFS='.'
+    _ver_parts=($1)
+    _ver_components=${#_ver_parts[@]}
+}
+
+# Compare two versions that may have different numbers of components.
+# Missing components are treated as 0 (so 1.2 == 1.2.0, and 2 > 1.9.9).
+# Returns 0 if $1 > $2, 1 otherwise.
 semver_gt() {
     local IFS='.'
     local -a a=($1) b=($2)
-    for i in 0 1 2; do
-        if (( a[i] > b[i] )); then return 0; fi
-        if (( a[i] < b[i] )); then return 1; fi
+    local max=${#a[@]}
+    (( ${#b[@]} > max )) && max=${#b[@]}
+    for ((i = 0; i < max; i++)); do
+        local av=${a[i]:-0} bv=${b[i]:-0}
+        if (( av > bv )); then return 0; fi
+        if (( av < bv )); then return 1; fi
     done
     return 1
+}
+
+# Bump a version: $1=current_version, $2=bump_type (major|minor|patch).
+# Preserves the component count of the current version.
+#   X:     major→X+1,  minor→X+1,  patch→X+1
+#   X.Y:   major→X+1.0, minor→X.Y+1, patch→X.Y+1
+#   X.Y.Z: standard semver
+bump_version() {
+    parse_version "$1"
+    local n=$_ver_components
+    local -a v=("${_ver_parts[@]}")
+    case "$2" in
+        major)
+            v[0]=$((v[0] + 1))
+            for ((i = 1; i < n; i++)); do v[i]=0; done
+            ;;
+        minor)
+            if (( n >= 2 )); then
+                v[1]=$((v[1] + 1))
+                for ((i = 2; i < n; i++)); do v[i]=0; done
+            else
+                v[0]=$((v[0] + 1))
+            fi
+            ;;
+        patch)
+            v[$((n - 1))]=$((v[n - 1] + 1))
+            ;;
+    esac
+    local IFS='.'
+    echo "${v[*]}"
 }
 
 highest_version() {
@@ -1094,7 +1143,7 @@ consolidate_versions() {
         if [[ "$reply" == "n" ]]; then
             echo "  Skipping version consolidation."
             return 0
-        elif [[ "$reply" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        elif [[ "$reply" =~ ^[0-9]+(\.[0-9]+(\.[0-9]+)?)?$ ]]; then
             best="$reply"
         fi
     fi
@@ -1184,9 +1233,9 @@ update_project_version() {
     while IFS= read -r -d '' script_file; do
         [[ -f "$script_file" ]] || continue
         file "$script_file" 2>/dev/null | grep -q "text" || continue
-        if grep -qP '^VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$script_file" 2>/dev/null; then
+        if grep -qP '^VERSION="[0-9]+(\.[0-9]+(\.[0-9]+)?)?"' "$script_file" 2>/dev/null; then
             echo "Updating ${script_file} to ${next_version}..."
-            sed -i "s/^VERSION=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"/VERSION=\"${next_version}\"/" "$script_file"
+            sed -i "s/^VERSION=\"[0-9]\+\(\.[0-9]\+\(\.[0-9]\+\)\?\)\?\"/VERSION=\"${next_version}\"/" "$script_file"
             updated=true
         fi
     done < <(find . -maxdepth 2 \( -name "*.sh" -o -type f -executable \) -not -path './.git/*' -not -path './node_modules/*' -print0 2>/dev/null)
@@ -1349,8 +1398,8 @@ do_release() {
             read -p "Enter initial version [${initial_ver}]: " user_ver
             if [[ -n "$user_ver" ]]; then
                 user_ver="${user_ver#v}"
-                if ! [[ "$user_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                    echo -e "${C_RED}Error:${C_RESET} Invalid version format. Use X.Y.Z"
+                if ! validate_version "$user_ver"; then
+                    echo -e "${C_RED}Error:${C_RESET} Invalid version format. Use X, X.Y, or X.Y.Z"
                     exit 1
                 fi
                 initial_ver="$user_ver"
@@ -1381,14 +1430,16 @@ do_release() {
         fi
     fi
 
-    if ! [[ "$current_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-        echo -e "${C_RED}Error:${C_RESET} Latest tag '$latest_tag' is not valid semver."
+    if ! validate_version "$current_ver"; then
+        echo -e "${C_RED}Error:${C_RESET} Latest tag '$latest_tag' is not a valid version (X, X.Y, or X.Y.Z)."
         exit 1
     fi
 
-    local cur_major="${BASH_REMATCH[1]}"
-    local cur_minor="${BASH_REMATCH[2]}"
-    local cur_patch="${BASH_REMATCH[3]}"
+    parse_version "$current_ver"
+    local cur_major="${_ver_parts[0]}"
+    local cur_minor="${_ver_parts[1]:-0}"
+    local cur_patch="${_ver_parts[2]:-0}"
+    local cur_components=$_ver_components
 
     local bump_type=""
     local next_version=""
@@ -1414,22 +1465,18 @@ do_release() {
         fi
     elif [[ "$RELEASE_ARG" =~ ^(patch|minor|major)$ ]]; then
         bump_type="$RELEASE_ARG"
-    elif [[ "$RELEASE_ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    elif [[ "$RELEASE_ARG" =~ ^[0-9]+(\.[0-9]+(\.[0-9]+)?)?$ ]]; then
         next_version="$RELEASE_ARG"
         bump_type="explicit"
     else
         echo -e "${C_RED}Error:${C_RESET} Invalid release argument '$RELEASE_ARG'."
-        echo "  Usage: aicommit --release [patch|minor|major|X.Y.Z]"
+        echo "  Usage: aicommit --release [patch|minor|major|X|X.Y|X.Y.Z]"
         exit 1
     fi
 
     # Calculate next version if not explicit
     if [[ -z "$next_version" ]]; then
-        case "$bump_type" in
-            major) next_version="$((cur_major + 1)).0.0" ;;
-            minor) next_version="${cur_major}.$((cur_minor + 1)).0" ;;
-            patch) next_version="${cur_major}.${cur_minor}.$((cur_patch + 1))" ;;
-        esac
+        next_version=$(bump_version "$current_ver" "$bump_type")
     fi
 
     # Count commits since last tag
