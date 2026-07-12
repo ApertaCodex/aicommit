@@ -35,6 +35,18 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "--model" ]]
 }
 
+@test "aicommit --model-url flag exists" {
+  run "$AICOMMIT_SCRIPT" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--model-url" ]]
+}
+
+@test "aicommit --model-url requires a value" {
+  run "$AICOMMIT_SCRIPT" --model-url
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "--model-url requires a value" ]]
+}
+
 @test "aicommit -h shows help" {
   run "$AICOMMIT_SCRIPT" -h
   [ "$status" -eq 0 ]
@@ -49,6 +61,7 @@ AICOMMIT_SCRIPT="${BATS_TEST_DIRNAME}/../../aicommit"
   [[ "$output" =~ "-c" ]]
   [[ "$output" =~ "-p" ]]
   [[ "$output" =~ "-m" ]]
+  [[ "$output" =~ "-u" ]]
   [[ "$output" =~ "-r" ]]
   [[ "$output" =~ "-h" ]]
 }

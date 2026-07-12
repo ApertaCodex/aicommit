@@ -14,6 +14,7 @@
 #   aicommit -y|--yes                  # non-interactive; auto-use generated message
 #   aicommit -p|--provider <name>      # use a specific AI provider
 #   aicommit -m|--model <name>         # optional model override for the chosen provider
+#   aicommit -u|--model-url <url>      # optional base URL override (e.g. remote Ollama host)
 #   aicommit --pull                     # auto pull origin branch with --no-rebase before commit
 #   aicommit -r|--release [bump|ver]   # release: patch, minor, major, X, X.Y, X.Y.Z, or auto
 #   aicommit --remap                    # AI-rediscover version files; regenerate .aicommit/bump-version.sh
@@ -79,6 +80,15 @@ STATUS_OK="${C_GREEN}●${C_RESET}"
 STATUS_MISS="${C_RED}●${C_RESET}"
 STATUS_WARN="${C_YELLOW}●${C_RESET}"
 
+# Resolve the Ollama base URL: CLI --model-url > AICOMMIT_MODEL_URL env >
+# default localhost. Trailing slashes are stripped. Used by the availability
+# probe, status table and call_ollama so a single flag redirects everything
+# (e.g. a remote/cloud Ollama host for models like kimi-k2.5:cloud).
+ollama_base_url() {
+    local url="${CLI_MODEL_URL:-${AICOMMIT_MODEL_URL:-http://localhost:11434}}"
+    printf '%s' "${url%/}"
+}
+
 show_help() {
     echo -e "${C_BOLD}aicommit${C_RESET} – generate an AI commit message, commit and push."
     echo
@@ -87,6 +97,7 @@ show_help() {
     echo -e "${C_BOLD}${C_CYAN}Options:${C_RESET}"
     echo -e "  ${C_GREEN}--provider${C_RESET}, ${C_GREEN}-p${C_RESET} ${C_DIM}<name>${C_RESET}  AI provider to use for this run."
     echo -e "  ${C_GREEN}--model${C_RESET},    ${C_GREEN}-m${C_RESET} ${C_DIM}<name>${C_RESET}  Optional model override for the selected provider."
+    echo -e "  ${C_GREEN}--model-url${C_RESET},${C_GREEN}-u${C_RESET} ${C_DIM}<url>${C_RESET}   Optional base URL override (e.g. a remote Ollama host)."
     echo -e "  ${C_GREEN}--no-push${C_RESET},  ${C_GREEN}-n${C_RESET}          Do not push the commit to the remote."
     echo -e "  ${C_GREEN}--yes${C_RESET},      ${C_GREEN}-y${C_RESET}          Assume yes: auto-use the generated message."
     echo -e "  ${C_GREEN}--changelog${C_RESET}, ${C_GREEN}-c${C_RESET}          Update CHANGELOG.md with this commit."
@@ -170,11 +181,13 @@ show_help() {
     fi
 
     # ollama
-    if command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null; then
+    local ollama_url
+    ollama_url="$(ollama_base_url)"
+    if curl -sf "$ollama_url/api/tags" &>/dev/null; then
         local ollama_model
         ollama_model="${AICOMMIT_OLLAMA_MODEL:-}"
         if [[ -z "$ollama_model" ]]; then
-            ollama_model=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // "none"' 2>/dev/null || echo "none")
+            ollama_model=$(curl -sf "$ollama_url/api/tags" 2>/dev/null | jq -r '.models[0].name // "none"' 2>/dev/null || echo "none")
         fi
         echo -e "  ${STATUS_OK}  ${C_BOLD}ollama${C_RESET}       ${C_WHITE}${ollama_model}${C_RESET}    ${C_GREEN}server running${C_RESET}"
     elif command -v ollama &>/dev/null; then
@@ -202,6 +215,9 @@ show_help() {
     echo -e ""
     echo -e "  ${C_DIM}# Override provider/model for a single run${C_RESET}"
     echo -e "  aicommit ${C_GREEN}--provider${C_RESET} anthropic ${C_GREEN}--model${C_RESET} claude-3-5-sonnet-latest"
+    echo -e ""
+    echo -e "  ${C_DIM}# Point Ollama at a remote/cloud host for a single run${C_RESET}"
+    echo -e "  aicommit ${C_GREEN}--provider${C_RESET} ollama ${C_GREEN}--model${C_RESET} kimi-k2.5:cloud ${C_GREEN}--model-url${C_RESET} http://127.0.0.1:11434"
 }
 
 # ---------- Self-update ----------
@@ -297,6 +313,7 @@ ASSUME_YES=false
 UPDATE_CHANGELOG=false
 CLI_PROVIDER=""
 CLI_MODEL=""
+CLI_MODEL_URL=""
 AUTO_PULL=false
 RELEASE_MODE=false
 RELEASE_ARG=""
@@ -325,6 +342,14 @@ while (( "$#" )); do
                 exit 1
             fi
             CLI_MODEL="$1"
+            ;;
+        --model-url|-u)
+            shift
+            if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
+                echo "Error: --model-url requires a value."
+                exit 1
+            fi
+            CLI_MODEL_URL="$1"
             ;;
         --release|-r)
             RELEASE_MODE=true
@@ -374,7 +399,17 @@ provider_available() {
         anthropic) [[ -n "${ANTHROPIC_API_KEY:-}" ]] ;;
         gemini)    [[ -n "${GEMINI_API_KEY:-}" ]] ;;
         groq)      [[ -n "${GROQ_API_KEY:-}" ]] ;;
-        ollama)    command -v ollama &>/dev/null && curl -sf http://localhost:11434/api/tags &>/dev/null ;;
+        ollama)
+            # When a custom base URL is set (--model-url / AICOMMIT_MODEL_URL),
+            # probe it directly — the local ollama binary need not be installed
+            # (e.g. a remote/cloud host). Otherwise require the local binary AND
+            # a reachable local server, as before.
+            if [[ -n "${CLI_MODEL_URL:-}" || -n "${AICOMMIT_MODEL_URL:-}" ]]; then
+                curl -sf "$(ollama_base_url)/api/tags" &>/dev/null
+            else
+                command -v ollama &>/dev/null && curl -sf "$(ollama_base_url)/api/tags" &>/dev/null
+            fi
+            ;;
         custom)    [[ -n "${AICOMMIT_CUSTOM_API_URL:-}" && -n "${AICOMMIT_CUSTOM_API_KEY:-}" ]] ;;
         *)         return 1 ;;
     esac
@@ -450,6 +485,19 @@ else
     esac
 fi
 
+# Resolve model base-URL override precedence:
+# CLI --model-url > AICOMMIT_MODEL_URL env > empty (use provider default).
+# Lets you point the ollama provider at a remote/cloud Ollama host, e.g.
+#   aicommit -p ollama -m kimi-k2.5:cloud --model-url http://127.0.0.1:11434
+MODEL_URL=""
+if [[ -n "$CLI_MODEL_URL" ]]; then
+    MODEL_URL="$CLI_MODEL_URL"
+elif [[ -n "${AICOMMIT_MODEL_URL:-}" ]]; then
+    MODEL_URL="$AICOMMIT_MODEL_URL"
+fi
+# Strip any trailing slash so we can append known API paths cleanly.
+MODEL_URL="${MODEL_URL%/}"
+
 # Validate provider has required credentials
 if ! provider_available "$PROVIDER"; then
     case "$PROVIDER" in
@@ -465,7 +513,7 @@ fi
 
 # Resolve Ollama model if not explicitly set
 if [[ "$PROVIDER" == "ollama" && -z "$MODEL" ]]; then
-    MODEL=$(curl -sf http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[0].name // empty' 2>/dev/null || true)
+    MODEL=$(curl -sf "$(ollama_base_url)/api/tags" 2>/dev/null | jq -r '.models[0].name // empty' 2>/dev/null || true)
     if [[ -z "$MODEL" ]]; then
         echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
         exit 1
@@ -634,10 +682,12 @@ call_groq() {
 call_ollama() {
     local user_prompt="$1"
     local model="${MODEL:-${AICOMMIT_OLLAMA_MODEL:-}}"
+    local base_url
+    base_url="$(ollama_base_url)"
 
     # Auto-detect the first available model if not provided
     if [[ -z "$model" ]]; then
-        model=$(curl -sf http://localhost:11434/api/tags | jq -r '.models[0].name // empty')
+        model=$(curl -sf "$base_url/api/tags" | jq -r '.models[0].name // empty')
     fi
     if [[ -z "$model" ]]; then
         echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
@@ -659,7 +709,7 @@ call_ollama() {
         }')
 
     local response
-    response=$(curl -s http://localhost:11434/api/chat \
+    response=$(curl -s "$base_url/api/chat" \
         -H "Content-Type: application/json" \
         -d "$payload")
 
@@ -720,6 +770,55 @@ call_ai_provider() {
         ollama)    call_ollama "$user_prompt" ;;
         custom)    call_custom "$user_prompt" ;;
     esac
+}
+
+# Deterministic Conventional-Commit fallback, used when the AI provider yields no
+# usable message (cloud model unreachable, or a diff too large to summarize).
+# Derives a summary from the changed top-level paths so a commit is never blocked
+# by git's "Aborting commit due to empty commit message".
+fallback_commit_message() {
+    local names count top
+    names=$( { git diff --cached --name-only 2>/dev/null
+               git diff --name-only 2>/dev/null
+               git ls-files --others --exclude-standard 2>/dev/null
+             } | sed '/^[[:space:]]*$/d' | sort -u )
+    count=$(printf '%s\n' "$names" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+    top=$(printf '%s\n' "$names" \
+        | awk -F/ 'NF>1 {print $1; next} {print "(root)"}' \
+        | sort | uniq -c | sort -rn | head -3 \
+        | awk '{$1=""; sub(/^ /,""); print}' | paste -sd', ' - )
+    [[ -z "$top" ]] && top="repository"
+    if (( count <= 1 )); then
+        echo "chore: update ${top}"
+    else
+        echo "chore: update ${top} (${count} files)"
+    fi
+}
+
+# Generate a commit message with retries, treating an empty/whitespace/"null"
+# response as a failure. After AICOMMIT_MSG_RETRIES exhausted attempts it emits a
+# deterministic fallback. Always prints a non-empty message and returns 0 so the
+# caller never feeds an empty string to `git commit -m`.
+generate_commit_message() {
+    local diff_text="$1"
+    local attempts="${AICOMMIT_MSG_RETRIES:-3}"
+    local msg stripped i
+    for (( i=1; i<=attempts; i++ )); do
+        msg=$(call_ai_provider "$diff_text" || true)
+        msg=$(printf '%s\n' "$msg" | sed '/^```/d')          # strip markdown fences
+        stripped=$(printf '%s' "$msg" | tr -d '[:space:]')
+        if [[ -n "$stripped" && "$stripped" != "null" ]]; then
+            printf '%s\n' "$msg"
+            return 0
+        fi
+        if (( i < attempts )); then
+            echo "aicommit: empty AI response (attempt $i/$attempts); retrying…" >&2
+            sleep 1
+        fi
+    done
+    echo "aicommit: AI provider returned no usable message after $attempts attempts; using deterministic fallback." >&2
+    fallback_commit_message
+    return 0
 }
 
 # ---------- Release helpers ----------
@@ -1337,8 +1436,7 @@ do_release() {
         else
             echo "Analyzing changes and generating commit message (provider: $PROVIDER, model: ${MODEL:-auto})..."
             local gen_msg
-            gen_msg=$(call_ai_provider "$full_diff") || exit 1
-            gen_msg=$(echo "$gen_msg" | sed '/^```/d')
+            gen_msg=$(generate_commit_message "$full_diff")
 
             echo -e "\nAI-generated commit message:"
             echo "--------------------------------"
@@ -1363,6 +1461,9 @@ do_release() {
                 esac
             fi
 
+            if [[ -z "$(printf '%s' "$final_msg" | tr -d '[:space:]')" ]]; then
+                final_msg=$(fallback_commit_message)
+            fi
             git add -A
             git commit -m "$final_msg"
             echo -e "\n${C_GREEN}Changes committed.${C_RESET}"
@@ -1832,8 +1933,7 @@ fi
 
 echo "Analyzing changes and generating commit message (provider: $PROVIDER, model: ${MODEL:-auto})..."
 
-GENERATED_MSG=$(call_ai_provider "$FULL_DIFF") || exit 1
-GENERATED_MSG=$(echo "$GENERATED_MSG" | sed '/^```/d')   # strip possible fences
+GENERATED_MSG=$(generate_commit_message "$FULL_DIFF")
 
 # ---- User review ----
 echo -e "\nAI‑generated commit message:"
@@ -1882,6 +1982,9 @@ if $AUTO_PULL; then
 fi
 
 # ---- Commit ----
+if [[ -z "$(printf '%s' "$FINAL_MSG" | tr -d '[:space:]')" ]]; then
+    FINAL_MSG=$(fallback_commit_message)
+fi
 git add -A
 git commit -m "$FINAL_MSG"
 

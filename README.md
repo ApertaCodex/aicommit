@@ -75,9 +75,26 @@ aicommit -p openai -m gpt-4o-mini   # Override provider model
 aicommit -y -n              # Combine options
 aicommit -c -y -n           # All options together
 
+# Point Ollama at a remote/cloud host (e.g. cloud models like kimi-k2.5:cloud)
+aicommit -p ollama -m kimi-k2.5:cloud -u http://127.0.0.1:11434
+
 # Also works as a git command
 git aicommit
 ```
+
+### Custom model host (`--model-url` / `-u`)
+
+Use `--model-url` (or `-u`) to override the Ollama base URL for a single run —
+handy for pointing at a remote or cloud Ollama host instead of the default
+`http://localhost:11434`:
+
+```bash
+aicommit -p ollama -m kimi-k2.5:cloud --model-url http://127.0.0.1:11434
+```
+
+You can also set it persistently via the `AICOMMIT_MODEL_URL` environment
+variable. Precedence is: `--model-url` flag > `AICOMMIT_MODEL_URL` > default
+localhost. When a custom URL is set, the local `ollama` binary is not required.
 
 The tool analyzes your git changes, generates a conventional commit message, and lets you review, edit, or abort before committing.
 
