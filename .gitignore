@@ -16,3 +16,6 @@ Thumbs.db
 # Logs
 *.log
 .codesync/
+.codesync-todos.json
+.claude/
+.claude.json
