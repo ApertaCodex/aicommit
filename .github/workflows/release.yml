@@ -34,7 +34,7 @@ jobs:
         run: |
           chmod +x scripts/prepare-release.sh
           # CHANGELOG may already be prepared by 'aicommit --release'; skip gracefully
-          if grep -A 10 "## \[Unreleased\]" CHANGELOG.md | grep -q "^###"; then
+          if sed -n '/## \[Unreleased\]/,/^## \[/p' CHANGELOG.md | grep -q "^###"; then
             ./scripts/prepare-release.sh ${{ steps.get_version.outputs.version }}
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"

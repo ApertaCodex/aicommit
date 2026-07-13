@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-07-13
+### Fixed
+- Improve semantic version parsing to handle flexible version formats
+
+## [1.23.0] - 2026-07-13
+### Fixed
+- Auto-append `/v1` to bare model URLs to prevent 404 errors
+- Guard against non-JSON responses from OpenAI-compatible endpoints
+
+## [1.22.0] - 2026-07-13
+### Added
+- `--model-url` / `-u` flag to override the API base URL for any provider
+- Support for custom OpenAI-compatible endpoints (e.g. local proxies)
+
 ## [1.10.0] - 2026-03-14
 ### Added
 - Detect and update inline `VERSION="X.Y.Z"` in shell scripts and executables during release
