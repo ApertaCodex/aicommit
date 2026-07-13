@@ -24,7 +24,7 @@
 # ----------------------------------------------------------------------
 
 # Version information
-VERSION="1.22.0"
+VERSION="1.23.0"
 
 # Display banner with rainbow-style ASCII art header
 show_banner() {
@@ -549,6 +549,12 @@ call_openai() {
     # Base URL: --model-url / AICOMMIT_MODEL_URL override (e.g. a local
     # OpenAI-compatible proxy at http://127.0.0.1:8317/v1) else real OpenAI.
     local base_url="${MODEL_URL:-https://api.openai.com/v1}"
+    # OpenAI-compatible servers expose the API under /v1. If a bare host was
+    # given (e.g. http://127.0.0.1:8317) auto-append /v1 so we don't POST to a
+    # 404 root path. Only do this when no path segment is present.
+    if [[ "$base_url" =~ ^https?://[^/]+/?$ ]]; then
+        base_url="${base_url%/}/v1"
+    fi
     # gpt-5 / o-series models reject the legacy `max_tokens` field and require
     # `max_completion_tokens` instead. Pick the right one for the model.
     local token_field="max_tokens"
@@ -576,6 +582,15 @@ call_openai() {
         -H "Authorization: Bearer ${OPENAI_API_KEY:-sk-noauth}" \
         -d "$payload")
 
+    # Guard against non-JSON replies (404 HTML, proxy errors, empty body) so we
+    # emit a readable error instead of a jq parse crash.
+    if ! echo "$response" | jq -e . &>/dev/null; then
+        local snippet
+        snippet=$(printf '%s' "$response" | tr '\n' ' ' | cut -c1-200)
+        echo "Error from OpenAI endpoint (${base_url}): non-JSON response: ${snippet:-<empty>}" >&2
+        return 1
+    fi
+
     if echo "$response" | jq -e '.error' &>/dev/null; then
         local err_msg
         err_msg=$(echo "$response" | jq -r '.error.message')
@@ -583,7 +598,7 @@ call_openai() {
         return 1
     fi
 
-    echo "$response" | jq -r '.choices[0].message.content'
+    echo "$response" | jq -r '.choices[0].message.content // empty'
 }
 
 call_anthropic() {
