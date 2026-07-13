@@ -1151,7 +1151,7 @@ validate_version() {
 # Also sets _ver_components to the count (1, 2, or 3).
 parse_version() {
     local IFS='.'
-    _ver_parts=($1)
+    read -ra _ver_parts <<< "$1"
     _ver_components=${#_ver_parts[@]}
 }
 
@@ -1160,7 +1160,9 @@ parse_version() {
 # Returns 0 if $1 > $2, 1 otherwise.
 semver_gt() {
     local IFS='.'
-    local -a a=($1) b=($2)
+    local -a a b
+    read -ra a <<< "$1"
+    read -ra b <<< "$2"
     local max=${#a[@]}
     (( ${#b[@]} > max )) && max=${#b[@]}
     for ((i = 0; i < max; i++)); do
@@ -1194,7 +1196,7 @@ bump_version() {
             fi
             ;;
         patch)
-            v[$((n - 1))]=$((v[n - 1] + 1))
+            v[n - 1]=$((v[n - 1] + 1))
             ;;
     esac
     local IFS='.'
@@ -1553,10 +1555,6 @@ do_release() {
     fi
 
     parse_version "$current_ver"
-    local cur_major="${_ver_parts[0]}"
-    local cur_minor="${_ver_parts[1]:-0}"
-    local cur_patch="${_ver_parts[2]:-0}"
-    local cur_components=$_ver_components
 
     local bump_type=""
     local next_version=""
