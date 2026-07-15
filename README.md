@@ -98,6 +98,35 @@ localhost. When a custom URL is set, the local `ollama` binary is not required.
 
 The tool analyzes your git changes, generates a conventional commit message, and lets you review, edit, or abort before committing.
 
+### Version rollover (`--rollover`)
+
+By default, version components grow without limit (`1.2.99` → `1.2.100`).
+With rollover enabled, a component that reaches its per-position max resets to
+0 and carries into the next more-significant component — the most-significant
+component never has a max:
+
+| Format  | Maxes                          | Example                          |
+|---------|--------------------------------|----------------------------------|
+| `X.Y.Z` | Y max 10, Z max 100            | `1.2.99` + patch → `1.3.0`; `1.9.99` + patch → `2.0.0` |
+| `X.Y`   | Y max 10                       | `1.9` + patch → `2.0`            |
+| `X`     | no max                         | `9` + patch → `10`               |
+
+The feature is **off by default**. Enable it per run, per shell, or persistently:
+
+```bash
+# Per run
+aicommit --release --rollover
+
+# Per shell / CI
+export AICOMMIT_ROLLOVER=true
+
+# Persistently
+echo 'AICOMMIT_ROLLOVER=true' >> ~/.aicommitrc
+```
+
+The maxes are tunable via `AICOMMIT_ROLLOVER_MAX_MINOR` (default 10) and
+`AICOMMIT_ROLLOVER_MAX_PATCH` (default 100).
+
 ## CHANGELOG Integration
 
 The `--changelog` (or `-c`) flag automatically updates `CHANGELOG.md` following the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.

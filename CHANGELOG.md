@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Opt-in version rollover for releases (`--rollover` flag, `AICOMMIT_ROLLOVER=true` env var, or config file). When a version component reaches its per-position max it resets to 0 and carries into the next more-significant one. Defaults: `X.Y.Z` → Y max 10, Z max 100; `X.Y` → Y max 10; `X` → no max. Maxes are tunable via `AICOMMIT_ROLLOVER_MAX_MINOR` and `AICOMMIT_ROLLOVER_MAX_PATCH`. Off by default.
 
 ## [1.23.1] - 2026-07-13
 ### Fixed

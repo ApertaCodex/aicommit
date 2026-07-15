@@ -106,6 +106,9 @@ show_help() {
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
     echo -e "  ${C_GREEN}--remap${C_RESET}                   Re-run AI version-file discovery and regenerate"
     echo -e "                              ${C_DIM}.aicommit/bump-version.sh for this project.${C_RESET}"
+    echo -e "  ${C_GREEN}--rollover${C_RESET}                Enable version rollover: components that reach their"
+    echo -e "                              ${C_DIM}max carry into the next one (X.Y.Z: Y max 10, Z max 100;${C_RESET}"
+    echo -e "                              ${C_DIM}X.Y: Y max 10; X: no max). Off by default.${C_RESET}"
     echo -e "  ${C_GREEN}--update${C_RESET}                  Update aicommit to the latest release from GitHub."
     echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
@@ -225,6 +228,106 @@ GITHUB_REPO="apertacodex/aicommit"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/aicommit"
 GITHUB_API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 
+# Check for a newer version on every invocation (except --update/--version/--help).
+# If the user opts to upgrade, the new binary replaces the current one and we
+# re-exec it with the same arguments so the original action proceeds seamlessly.
+check_for_update() {
+    # Skip the check for meta-commands
+    for arg in "$@"; do
+        case "$arg" in
+            --update|-v|-V|--version|-h|--help) return 0 ;;
+        esac
+    done
+
+    # Don't check if we just upgraded (avoid infinite loop)
+    if [[ "${AICOMMIT_JUST_UPGRADED:-}" == "1" ]]; then
+        return 0
+    fi
+
+    local latest_version
+    latest_version=$(curl -sfL --connect-timeout 2 --max-time 3 "$GITHUB_API_URL" \
+        | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//')
+
+    # Silently skip if the check fails (no network, rate-limited, etc.)
+    if [[ -z "$latest_version" ]]; then
+        return 0
+    fi
+
+    # Already current — nothing to do
+    if [[ "$VERSION" == "$latest_version" ]]; then
+        return 0
+    fi
+
+    # Is the remote actually newer?
+    if ! semver_gt "$latest_version" "$VERSION"; then
+        return 0
+    fi
+
+    echo ""
+    echo -e "  ${C_YELLOW}${C_BOLD}⬆  New version available: v${latest_version}  (you have v${VERSION})${C_RESET}"
+    echo -n "  Upgrade now? [Y/n] "
+
+    local answer
+    if [[ "${ASSUME_YES:-false}" == "true" ]]; then
+        answer="y"
+        echo "y"
+    else
+        read -r answer
+    fi
+
+    if [[ ! "$answer" =~ ^[Yy] ]]; then
+        echo -e "  ${C_DIM}Skipping upgrade. Run \`aicommit --update\` later.${C_RESET}"
+        echo ""
+        return 0
+    fi
+
+    echo -e "  ${C_CYAN}Upgrading aicommit → v${latest_version}...${C_RESET}"
+
+    # Find the current binary
+    local current_bin
+    current_bin=$(command -v aicommit 2>/dev/null || echo "$0")
+
+    local actual_bin
+    if command -v readlink &>/dev/null; then
+        actual_bin=$(readlink -f "$current_bin" 2>/dev/null || echo "$current_bin")
+    else
+        actual_bin="$current_bin"
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp /tmp/aicommit-update-XXXXXX)
+
+    if ! curl -fsSL --connect-timeout 5 --max-time 15 "$GITHUB_RAW_URL" -o "$tmp_file"; then
+        echo -e "  ${C_RED}Error: Failed to download the latest version.${C_RESET}"
+        rm -f "$tmp_file"
+        return 0
+    fi
+
+    if ! head -1 "$tmp_file" | grep -q '#!/usr/bin/env bash'; then
+        echo -e "  ${C_RED}Error: Downloaded file is not a valid aicommit script.${C_RESET}"
+        rm -f "$tmp_file"
+        return 0
+    fi
+
+    chmod +x "$tmp_file"
+
+    if [[ -w "$actual_bin" ]]; then
+        mv "$tmp_file" "$actual_bin"
+    elif sudo -n true 2>/dev/null; then
+        sudo mv "$tmp_file" "$actual_bin"
+    else
+        echo -e "  ${C_YELLOW}Elevated permissions required to update ${actual_bin}${C_RESET}"
+        sudo mv "$tmp_file" "$actual_bin"
+    fi
+
+    echo -e "  ${C_GREEN}✅ Upgraded to v${latest_version}${C_RESET}"
+    echo ""
+
+    # Re-exec the new binary with the same arguments
+    export AICOMMIT_JUST_UPGRADED=1
+    exec "$actual_bin" "$@"
+}
+
 self_update() {
     echo -e "${C_CYAN}${C_BOLD}Checking for updates...${C_RESET}"
 
@@ -318,6 +421,10 @@ AUTO_PULL=false
 RELEASE_MODE=false
 RELEASE_ARG=""
 REMAP=false
+CLI_ROLLOVER=false
+
+# Save original args before the while loop consumes them (needed for re-exec after upgrade)
+ORIGINAL_ARGS=("$@")
 
 while (( "$#" )); do
     case "$1" in
@@ -326,6 +433,7 @@ while (( "$#" )); do
         --pull)        AUTO_PULL=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
         --remap)       REMAP=true ;;
+        --rollover)    CLI_ROLLOVER=true ;;
         --provider|-p)
             shift
             if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
@@ -377,6 +485,9 @@ while (( "$#" )); do
     esac
     shift
 done
+
+# ---------- Check for updates ----------
+check_for_update "${ORIGINAL_ARGS[@]}"
 
 # ---------- Repository checks ----------
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -497,6 +608,28 @@ elif [[ -n "${AICOMMIT_MODEL_URL:-}" ]]; then
 fi
 # Strip any trailing slash so we can append known API paths cleanly.
 MODEL_URL="${MODEL_URL%/}"
+
+# ---------- Resolve version rollover (off by default) ----------
+# When enabled, version components that reach their max carry over into the
+# next more-significant component (like digits in a number system).
+# Precedence: CLI --rollover > AICOMMIT_ROLLOVER env > config file > off.
+ROLLOVER=false
+if [[ "$CLI_ROLLOVER" == "true" ]]; then
+    ROLLOVER=true
+elif [[ -n "${AICOMMIT_ROLLOVER:-}" ]]; then
+    [[ "${AICOMMIT_ROLLOVER,,}" == "true" || "$AICOMMIT_ROLLOVER" == "1" ]] && ROLLOVER=true
+elif [[ -f "$CONFIG_FILE" ]]; then
+    cfg_rollover=$(grep -E '^AICOMMIT_ROLLOVER=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]"'"'" || true)
+    [[ "${cfg_rollover,,}" == "true" || "$cfg_rollover" == "1" ]] && ROLLOVER=true
+fi
+
+# Per-position maximums (overridable via env). The most-significant component
+# never has a max. Defaults:
+#   X.Y.Z → Y max 10, Z max 100
+#   X.Y   → Y max 10
+#   X     → no max
+ROLLOVER_MAX_MINOR="${AICOMMIT_ROLLOVER_MAX_MINOR:-10}"
+ROLLOVER_MAX_PATCH="${AICOMMIT_ROLLOVER_MAX_PATCH:-100}"
 
 # Validate provider has required credentials
 if ! provider_available "$PROVIDER"; then
@@ -1173,11 +1306,45 @@ semver_gt() {
     return 1
 }
 
+# Apply version rollover (only when ROLLOVER=true): when a component reaches
+# its per-position max, it resets to 0 and carries +1 into the next
+# more-significant component (cascading). The most-significant component
+# (position 1) never has a max.
+#   X.Y.Z → Y max ROLLOVER_MAX_MINOR (10), Z max ROLLOVER_MAX_PATCH (100)
+#   X.Y   → Y max ROLLOVER_MAX_MINOR (10)
+#   X     → no max
+# $1=version; prints the (possibly rolled-over) version.
+apply_rollover() {
+    parse_version "$1"
+    local n=$_ver_components
+    local -a v=("${_ver_parts[@]}")
+    if [[ "$ROLLOVER" == "true" && $n -ge 2 ]]; then
+        # Walk from least- to most-significant, carrying overflow upward.
+        # Index n-1 is the last component; index 0 never rolls over.
+        local -a maxes
+        if (( n == 3 )); then
+            maxes=(0 "$ROLLOVER_MAX_MINOR" "$ROLLOVER_MAX_PATCH")
+        else
+            maxes=(0 "$ROLLOVER_MAX_MINOR")
+        fi
+        for ((i = n - 1; i >= 1; i--)); do
+            if (( v[i] >= maxes[i] )); then
+                v[i]=0
+                v[i - 1]=$((v[i - 1] + 1))
+            fi
+        done
+    fi
+    local IFS='.'
+    echo "${v[*]}"
+}
+
 # Bump a version: $1=current_version, $2=bump_type (major|minor|patch).
 # Preserves the component count of the current version.
 #   X:     major→X+1,  minor→X+1,  patch→X+1
 #   X.Y:   major→X+1.0, minor→X.Y+1, patch→X.Y+1
 #   X.Y.Z: standard semver
+# With ROLLOVER=true, components that reach their max carry over (see
+# apply_rollover).
 bump_version() {
     parse_version "$1"
     local n=$_ver_components
@@ -1200,7 +1367,7 @@ bump_version() {
             ;;
     esac
     local IFS='.'
-    echo "${v[*]}"
+    apply_rollover "${v[*]}"
 }
 
 highest_version() {
