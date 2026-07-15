@@ -111,12 +111,9 @@ component never has a max:
 | `X.Y`   | Y max 10                       | `1.9` + patch → `2.0`            |
 | `X`     | no max                         | `9` + patch → `10`               |
 
-The feature is **off by default**. Enable it per run, per shell, or persistently:
+The feature is **off by default**. Enable it per shell or persistently:
 
 ```bash
-# Per run
-aicommit --release --rollover
-
 # Per shell / CI
 export AICOMMIT_ROLLOVER=true
 

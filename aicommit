@@ -106,9 +106,6 @@ show_help() {
     echo -e "                              ${C_DIM}If omitted, AI auto-detects the bump type.${C_RESET}"
     echo -e "  ${C_GREEN}--remap${C_RESET}                   Re-run AI version-file discovery and regenerate"
     echo -e "                              ${C_DIM}.aicommit/bump-version.sh for this project.${C_RESET}"
-    echo -e "  ${C_GREEN}--rollover${C_RESET}                Enable version rollover: components that reach their"
-    echo -e "                              ${C_DIM}max carry into the next one (X.Y.Z: Y max 10, Z max 100;${C_RESET}"
-    echo -e "                              ${C_DIM}X.Y: Y max 10; X: no max). Off by default.${C_RESET}"
     echo -e "  ${C_GREEN}--update${C_RESET}                  Update aicommit to the latest release from GitHub."
     echo -e "  ${C_GREEN}-v${C_RESET}, ${C_GREEN}-V${C_RESET}, ${C_GREEN}--version${C_RESET}      Show version information."
     echo -e "  ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}               Show this help message."
@@ -421,8 +418,6 @@ AUTO_PULL=false
 RELEASE_MODE=false
 RELEASE_ARG=""
 REMAP=false
-CLI_ROLLOVER=false
-
 # Save original args before the while loop consumes them (needed for re-exec after upgrade)
 ORIGINAL_ARGS=("$@")
 
@@ -433,7 +428,6 @@ while (( "$#" )); do
         --pull)        AUTO_PULL=true ;;
         --changelog|-c) UPDATE_CHANGELOG=true ;;
         --remap)       REMAP=true ;;
-        --rollover)    CLI_ROLLOVER=true ;;
         --provider|-p)
             shift
             if [[ -z "${1:-}" || "${1:-}" =~ ^- ]]; then
@@ -612,11 +606,9 @@ MODEL_URL="${MODEL_URL%/}"
 # ---------- Resolve version rollover (off by default) ----------
 # When enabled, version components that reach their max carry over into the
 # next more-significant component (like digits in a number system).
-# Precedence: CLI --rollover > AICOMMIT_ROLLOVER env > config file > off.
+# Precedence: AICOMMIT_ROLLOVER env > config file > off.
 ROLLOVER=false
-if [[ "$CLI_ROLLOVER" == "true" ]]; then
-    ROLLOVER=true
-elif [[ -n "${AICOMMIT_ROLLOVER:-}" ]]; then
+if [[ -n "${AICOMMIT_ROLLOVER:-}" ]]; then
     [[ "${AICOMMIT_ROLLOVER,,}" == "true" || "$AICOMMIT_ROLLOVER" == "1" ]] && ROLLOVER=true
 elif [[ -f "$CONFIG_FILE" ]]; then
     cfg_rollover=$(grep -E '^AICOMMIT_ROLLOVER=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]"'"'" || true)

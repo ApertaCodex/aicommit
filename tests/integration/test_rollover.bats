@@ -15,10 +15,10 @@ setup() {
   ROLLOVER_MAX_PATCH=100
 }
 
-@test "aicommit --rollover flag exists in help" {
+@test "aicommit help does not expose rollover as a flag" {
   run "$AICOMMIT_SCRIPT" --help
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "--rollover" ]]
+  ! [[ "$output" =~ "--rollover" ]]
 }
 
 # ---------- rollover OFF (default): legacy behaviour ----------
