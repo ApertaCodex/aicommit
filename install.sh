@@ -112,6 +112,20 @@ else
     print_info "No existing installation found"
 fi
 
+# Upgrade the executable the shell will actually run. Without this, an older
+# copy in ~/.local/bin can shadow a newer copy installed in /usr/local/bin.
+EXISTING_BIN="$(type -P aicommit 2>/dev/null || true)"
+if [[ -n "$EXISTING_BIN" && -f "$EXISTING_BIN" ]]; then
+    EXISTING_DIR="$(dirname "$EXISTING_BIN")"
+    if [[ -w "$EXISTING_DIR" ]]; then
+        INSTALL_DIR="$EXISTING_DIR"
+        SUDO=""
+    elif sudo -n true 2>/dev/null; then
+        INSTALL_DIR="$EXISTING_DIR"
+        SUDO="sudo"
+    fi
+fi
+
 # Download or copy aicommit script
 if [[ "$REMOTE_INSTALL" == true ]]; then
     print_info "Downloading aicommit from GitHub..."
@@ -212,6 +226,9 @@ DETECTED_LABELS=()
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
     DETECTED_PROVIDERS+=("openai")
     DETECTED_LABELS+=("OpenAI (OPENAI_API_KEY found)")
+elif [[ -n "${AICOMMIT_MODEL_URL:-}" ]]; then
+    DETECTED_PROVIDERS+=("openai")
+    DETECTED_LABELS+=("OpenAI-compatible endpoint (AICOMMIT_MODEL_URL set)")
 fi
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
@@ -264,7 +281,10 @@ else
     done
     echo
 
-    if [[ ${#DETECTED_PROVIDERS[@]} -eq 1 ]]; then
+    if [[ -n "${AICOMMIT_PROVIDER:-}" && " ${DETECTED_PROVIDERS[*]} " == *" ${AICOMMIT_PROVIDER} "* ]]; then
+        SELECTED_PROVIDER="$AICOMMIT_PROVIDER"
+        print_info "Using configured provider: $SELECTED_PROVIDER"
+    elif [[ ${#DETECTED_PROVIDERS[@]} -eq 1 ]]; then
         SELECTED_PROVIDER="${DETECTED_PROVIDERS[0]}"
         print_success "Auto-selected: $SELECTED_PROVIDER (only provider available)"
     else
@@ -305,6 +325,9 @@ echo "  aicommit --provider anthropic   # -p Use a specific provider for this ru
 echo "  aicommit --no-push              # -n Commit only, don't push"
 echo "  aicommit --yes                  # -y Non-interactive mode"
 echo "  aicommit --changelog            # -c Update CHANGELOG.md with this commit"
+echo "  aicommit --model-url <url>      # OpenAI-compatible endpoint base URL"
+echo "  aicommit --auth-route <route>   # Optional x-codesync-auth-route header"
+echo "  aicommit --effect <level>       # Optional request effect (for example: low)"
 echo "  aicommit --release patch        # -r Create a release (patch|minor|major|X.Y.Z)"
 echo "  aicommit --help                 # -h Show help"
 echo
