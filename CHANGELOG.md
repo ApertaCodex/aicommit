@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Provider errors (HTTP status >= 400, or a JSON `error` field) are no longer treated as an empty reply: the real error is printed once, other 4xx are not retried, and 5xx/408/429/network errors are retried with exponential backoff
+- Errors from a `--model-url` endpoint name the host (`Error from 127.0.0.1:8318 (openai-compatible)`) instead of "OpenAI API"
+- Falling back to a deterministic commit message now prints a warning with the provider error, and the fallback lists the changed files
+- Release bump detection no longer aborts on a provider error or an invalid answer: it falls back to a deterministic bump from Conventional Commit subjects (breaking -> major, feat -> minor, else patch) and says why
+- A release that fails after bumping version files but before tagging now rolls the bump back, and a failed release commit no longer gets tagged
+- The update check no longer aborts the run when the GitHub API request fails
+
 
 ## [1.24.0] - 2026-07-15
 ### Added

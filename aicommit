@@ -247,7 +247,7 @@ check_for_update() {
 
     local latest_version
     latest_version=$(curl -sfL --connect-timeout 2 --max-time 3 "$GITHUB_API_URL" \
-        | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//')
+        | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//' || true)
 
     # Silently skip if the check fails (no network, rate-limited, etc.)
     if [[ -z "$latest_version" ]]; then
@@ -406,6 +406,28 @@ self_update() {
 }
 
 set -euo pipefail
+
+# ---------- Run state + exit handling ----------
+# AI calls run inside $(...) subshells, so their failure cause is passed back to
+# the caller through files in this per-run state dir rather than variables.
+AI_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aicommit.XXXXXX")
+AI_ERROR_FILE="$AI_STATE_DIR/error"        # "<retryable|fatal>\t<message>"
+AI_FALLBACK_FILE="$AI_STATE_DIR/fallback"  # cause, when a fallback commit message was used
+# Set by do_release while version files are bumped but not yet tagged. If the
+# run exits non-zero in that window the tree is restored to this commit, so a
+# failed release never leaves files bumped without a matching tag.
+RELEASE_ROLLBACK_HEAD=""
+
+# shellcheck disable=SC2329  # invoked via trap
+aicommit_on_exit() {
+    local rc=$?
+    if (( rc != 0 )) && [[ -n "$RELEASE_ROLLBACK_HEAD" ]]; then
+        echo "aicommit: release failed (exit $rc); rolling back version bump to ${RELEASE_ROLLBACK_HEAD:0:12}..." >&2
+        git reset -q --hard "$RELEASE_ROLLBACK_HEAD" && git clean -fdq
+    fi
+    rm -rf "$AI_STATE_DIR"
+}
+trap aicommit_on_exit EXIT
 
 # ---------- Provider constants ----------
 VALID_PROVIDERS="openai anthropic gemini groq ollama custom"
@@ -694,6 +716,52 @@ $1
 EOF
 }
 
+ai_record_error() {  # ai_record_error <retryable|fatal> <message>
+    printf '%s\t%s\n' "$1" "$2" > "$AI_ERROR_FILE"
+}
+ai_last_error()       { [[ -s "$AI_ERROR_FILE" ]] && cut -f2- "$AI_ERROR_FILE" || true; }
+ai_last_error_class() { [[ -s "$AI_ERROR_FILE" ]] && cut -f1 "$AI_ERROR_FILE" || true; }
+
+# ai_http_post <label> <url> <payload> [extra curl args...]
+# Prints the response body on success. A provider error is any of: transport
+# failure, HTTP status >= 400, a non-JSON body, or a JSON body with an "error"
+# field. On error the cause is recorded (see ai_record_error) and it returns 1.
+# Transport errors, 5xx, 408 and 429 are retryable; everything else is fatal.
+ai_http_post() {
+    local label="$1" url="$2" payload="$3"; shift 3
+    local out rc=0 code body msg="" class=fatal
+    out=$(curl -sS --max-time "${AICOMMIT_HTTP_TIMEOUT:-300}" -w $'\n%{http_code}' \
+        "$url" "$@" -d "$payload" 2>"$AI_STATE_DIR/curl.err") || rc=$?
+    code="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    if (( rc != 0 )); then
+        msg=$(tr '\n' ' ' < "$AI_STATE_DIR/curl.err" | cut -c1-200)
+        ai_record_error retryable "Error from ${label}: request failed: ${msg:-curl exit $rc}"
+        return 1
+    fi
+    if jq empty <<<"$body" 2>/dev/null; then
+        msg=$(jq -r 'if type == "object" and .error != null
+                     then (.error | if type == "object" then (.message // tostring) else tostring end)
+                     else empty end' <<<"$body" 2>/dev/null || true)
+    fi
+    if [[ "$code" =~ ^[0-9]+$ ]] && (( code >= 400 )); then
+        [[ -z "$msg" ]] && msg=$(printf '%s' "$body" | tr '\n' ' ' | cut -c1-200)
+        if (( code >= 500 || code == 408 || code == 429 )); then class=retryable; fi
+        ai_record_error "$class" "Error from ${label}: HTTP ${code}: ${msg:-<empty body>}"
+        return 1
+    fi
+    if [[ -n "$msg" ]]; then
+        ai_record_error fatal "Error from ${label}: ${msg}"
+        return 1
+    fi
+    if ! jq empty <<<"$body" 2>/dev/null || [[ -z "$body" ]]; then
+        msg=$(printf '%s' "$body" | tr '\n' ' ' | cut -c1-200)
+        ai_record_error fatal "Error from ${label}: non-JSON response: ${msg:-<empty>}"
+        return 1
+    fi
+    printf '%s' "$body"
+}
+
 call_openai() {
     local user_prompt="$1"
     local model="${MODEL:-${AICOMMIT_OPENAI_MODEL:-gpt-4o-mini}}"
@@ -728,32 +796,22 @@ call_openai() {
             temperature: 0.7
         } + { ($tokfield): 2048 } + (if $effect == "" then {} else {effect: $effect} end)')
 
+    # Name the endpoint actually used: a --model-url server is not "OpenAI".
+    local label="OpenAI API"
+    if [[ -n "$MODEL_URL" ]]; then
+        local host="${base_url#*://}"
+        label="${host%%/*} (openai-compatible)"
+    fi
+
     local response
-    local -a curl_args=(curl -s "${base_url}/chat/completions" -H "Content-Type: application/json")
+    local -a hdrs=(-H "Content-Type: application/json")
     if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        curl_args+=( -H "Authorization: Bearer ${OPENAI_API_KEY}" )
+        hdrs+=( -H "Authorization: Bearer ${OPENAI_API_KEY}" )
     fi
     if [[ -n "$OPENAI_AUTH_ROUTE" ]]; then
-        curl_args+=( -H "x-codesync-auth-route: ${OPENAI_AUTH_ROUTE}" )
+        hdrs+=( -H "x-codesync-auth-route: ${OPENAI_AUTH_ROUTE}" )
     fi
-    curl_args+=( -d "$payload" )
-    response=$("${curl_args[@]}")
-
-    # Guard against non-JSON replies (404 HTML, proxy errors, empty body) so we
-    # emit a readable error instead of a jq parse crash.
-    if ! echo "$response" | jq -e . &>/dev/null; then
-        local snippet
-        snippet=$(printf '%s' "$response" | tr '\n' ' ' | cut -c1-200)
-        echo "Error from OpenAI endpoint (${base_url}): non-JSON response: ${snippet:-<empty>}" >&2
-        return 1
-    fi
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error.message')
-        echo "Error from OpenAI API: $err_msg" >&2
-        return 1
-    fi
+    response=$(ai_http_post "$label" "${base_url}/chat/completions" "$payload" "${hdrs[@]}") || return 1
 
     echo "$response" | jq -r '.choices[0].message.content // empty'
 }
@@ -776,18 +834,10 @@ call_anthropic() {
         }')
 
     local response
-    response=$(curl -s https://api.anthropic.com/v1/messages \
+    response=$(ai_http_post "Anthropic API" https://api.anthropic.com/v1/messages "$payload" \
         -H "Content-Type: application/json" \
         -H "x-api-key: $ANTHROPIC_API_KEY" \
-        -H "anthropic-version: 2023-06-01" \
-        -d "$payload")
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error.message')
-        echo "Error from Anthropic API: $err_msg" >&2
-        return 1
-    fi
+        -H "anthropic-version: 2023-06-01") || return 1
 
     echo "$response" | jq -r '.content[0].text'
 }
@@ -812,16 +862,9 @@ $user_prompt"
         }')
 
     local response
-    response=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=$GEMINI_API_KEY" \
-        -H "Content-Type: application/json" \
-        -d "$payload")
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error.message')
-        echo "Error from Gemini API: $err_msg" >&2
-        return 1
-    fi
+    response=$(ai_http_post "Gemini API" \
+        "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=$GEMINI_API_KEY" \
+        "$payload" -H "Content-Type: application/json") || return 1
 
     echo "$response" | jq -r '.candidates[0].content.parts[0].text'
 }
@@ -845,17 +888,9 @@ call_groq() {
         }')
 
     local response
-    response=$(curl -s https://api.groq.com/openai/v1/chat/completions \
+    response=$(ai_http_post "Groq API" https://api.groq.com/openai/v1/chat/completions "$payload" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $GROQ_API_KEY" \
-        -d "$payload")
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error.message')
-        echo "Error from Groq API: $err_msg" >&2
-        return 1
-    fi
+        -H "Authorization: Bearer $GROQ_API_KEY") || return 1
 
     echo "$response" | jq -r '.choices[0].message.content'
 }
@@ -871,7 +906,7 @@ call_ollama() {
         model=$(curl -sf "$base_url/api/tags" | jq -r '.models[0].name // empty')
     fi
     if [[ -z "$model" ]]; then
-        echo "Error: No Ollama models found. Pull a model first: ollama pull llama3.2" >&2
+        ai_record_error fatal "Error: No Ollama models found. Pull a model first: ollama pull llama3.2"
         return 1
     fi
 
@@ -890,16 +925,8 @@ call_ollama() {
         }')
 
     local response
-    response=$(curl -s "$base_url/api/chat" \
-        -H "Content-Type: application/json" \
-        -d "$payload")
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error')
-        echo "Error from Ollama: $err_msg" >&2
-        return 1
-    fi
+    response=$(ai_http_post "Ollama" "$base_url/api/chat" "$payload" \
+        -H "Content-Type: application/json") || return 1
 
     echo "$response" | jq -r '.message.content'
 }
@@ -923,34 +950,59 @@ call_custom() {
         }')
 
     local response
-    response=$(curl -s "$AICOMMIT_CUSTOM_API_URL" \
+    response=$(ai_http_post "custom API (${AICOMMIT_CUSTOM_API_URL})" "$AICOMMIT_CUSTOM_API_URL" "$payload" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AICOMMIT_CUSTOM_API_KEY" \
-        -d "$payload")
-
-    if echo "$response" | jq -e '.error' &>/dev/null; then
-        local err_msg
-        err_msg=$(echo "$response" | jq -r '.error.message')
-        echo "Error from custom API: $err_msg" >&2
-        return 1
-    fi
+        -H "Authorization: Bearer $AICOMMIT_CUSTOM_API_KEY") || return 1
 
     echo "$response" | jq -r '.choices[0].message.content'
 }
 
-call_ai_provider() {
-    local diff_text="$1"
-    local user_prompt
-    user_prompt=$(build_user_prompt "$diff_text")
-
+# One raw provider call for an already-built user prompt (uses $SYSTEM_PROMPT).
+call_provider() {
     case "$PROVIDER" in
-        openai)    call_openai "$user_prompt" ;;
-        anthropic) call_anthropic "$user_prompt" ;;
-        gemini)    call_gemini "$user_prompt" ;;
-        groq)      call_groq "$user_prompt" ;;
-        ollama)    call_ollama "$user_prompt" ;;
-        custom)    call_custom "$user_prompt" ;;
+        openai)    call_openai "$1" ;;
+        anthropic) call_anthropic "$1" ;;
+        gemini)    call_gemini "$1" ;;
+        groq)      call_groq "$1" ;;
+        ollama)    call_ollama "$1" ;;
+        custom)    call_custom "$1" ;;
     esac
+}
+
+# ai_complete <user_prompt>: one logical AI request. Transient provider errors
+# (transport, 5xx, 408, 429) are retried with exponential backoff; deterministic
+# ones (other 4xx, a JSON error on 2xx) are printed once and not retried. On
+# success prints the content (which may be empty) and returns 0; on failure the
+# cause stays available via ai_last_error and it returns 1.
+ai_complete() {
+    local prompt="$1"
+    local attempts="${AICOMMIT_AI_RETRIES:-3}" delay="${AICOMMIT_RETRY_DELAY:-1}" i out
+    for (( i=1; i<=attempts; i++ )); do
+        rm -f "$AI_ERROR_FILE"
+        if out=$(call_provider "$prompt"); then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        [[ -s "$AI_ERROR_FILE" ]] || ai_record_error fatal "AI provider call failed (provider: $PROVIDER)"
+        if [[ "$(ai_last_error_class)" != "retryable" ]]; then
+            echo "aicommit: $(ai_last_error)" >&2
+            return 1
+        fi
+        if (( i < attempts )); then
+            echo "aicommit: $(ai_last_error) (attempt $i/$attempts); retrying in ${delay}s..." >&2
+            sleep "$delay"
+            delay=$(( delay * 2 ))
+        else
+            echo "aicommit: $(ai_last_error) (attempt $i/$attempts); giving up." >&2
+        fi
+    done
+    return 1
+}
+
+call_ai_provider() {
+    local user_prompt
+    user_prompt=$(build_user_prompt "$1")
+    ai_complete "$user_prompt"
 }
 
 # Deterministic Conventional-Commit fallback, used when the AI provider yields no
@@ -966,40 +1018,80 @@ fallback_commit_message() {
     count=$(printf '%s\n' "$names" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
     top=$(printf '%s\n' "$names" \
         | awk -F/ 'NF>1 {print $1; next} {print "(root)"}' \
-        | sort | uniq -c | sort -rn | head -3 \
-        | awk '{$1=""; sub(/^ /,""); print}' | paste -sd', ' - )
+        | sort | uniq -c | sort -k1,1nr -k2 | head -3 \
+        | awk '{$1=""; sub(/^ /,""); print}' | paste -sd, - | sed 's/,/, /g' )
     [[ -z "$top" ]] && top="repository"
     if (( count <= 1 )); then
         echo "chore: update ${top}"
     else
         echo "chore: update ${top} (${count} files)"
     fi
+    if (( count >= 1 )); then
+        echo ""
+        printf '%s\n' "$names" | sed '/^[[:space:]]*$/d' | head -20 | sed 's/^/- /'
+        (( count > 20 )) && echo "- ... and $(( count - 20 )) more"
+    fi
+    return 0
 }
 
-# Generate a commit message with retries, treating an empty/whitespace/"null"
-# response as a failure. After AICOMMIT_MSG_RETRIES exhausted attempts it emits a
-# deterministic fallback. Always prints a non-empty message and returns 0 so the
-# caller never feeds an empty string to `git commit -m`.
+# Generate a commit message. Transient provider errors are retried inside
+# ai_complete; a provider error ends the attempts at once (it is not "empty").
+# Genuinely empty content is retried up to AICOMMIT_MSG_RETRIES times. On
+# failure it warns with the cause, records it in $AI_FALLBACK_FILE and emits a
+# deterministic fallback. Always prints a non-empty message and returns 0.
 generate_commit_message() {
     local diff_text="$1"
     local attempts="${AICOMMIT_MSG_RETRIES:-3}"
-    local msg stripped i
+    local msg stripped i cause=""
+    rm -f "$AI_FALLBACK_FILE"
     for (( i=1; i<=attempts; i++ )); do
-        msg=$(call_ai_provider "$diff_text" || true)
+        if ! msg=$(call_ai_provider "$diff_text"); then
+            cause=$(ai_last_error)
+            break
+        fi
         msg=$(printf '%s\n' "$msg" | sed '/^```/d')          # strip markdown fences
         stripped=$(printf '%s' "$msg" | tr -d '[:space:]')
         if [[ -n "$stripped" && "$stripped" != "null" ]]; then
             printf '%s\n' "$msg"
             return 0
         fi
+        cause="AI returned an empty message after $i attempt(s)"
         if (( i < attempts )); then
-            echo "aicommit: empty AI response (attempt $i/$attempts); retrying…" >&2
-            sleep 1
+            echo "aicommit: empty AI response (attempt $i/$attempts); retrying..." >&2
+            sleep "${AICOMMIT_RETRY_DELAY:-1}"
         fi
     done
-    echo "aicommit: AI provider returned no usable message after $attempts attempts; using deterministic fallback." >&2
+    cause="${cause:-unknown error}"
+    echo "aicommit: WARNING: AI commit message generation failed (${cause}); using deterministic fallback message." >&2
+    printf '%s\n' "$cause" > "$AI_FALLBACK_FILE"
     fallback_commit_message
     return 0
+}
+
+# Header shown above a generated message: flags a fallback so it is never
+# presented as AI output.
+print_message_header() {
+    if [[ -s "$AI_FALLBACK_FILE" ]]; then
+        echo -e "\n${C_YELLOW}Fallback commit message (AI failed: $(cat "$AI_FALLBACK_FILE")):${C_RESET}"
+    else
+        echo -e "\n$1"
+    fi
+}
+
+# Deterministic semver bump from the Conventional Commits in <range>:
+# BREAKING CHANGE or "type!:" -> major, feat -> minor, anything else -> patch.
+deterministic_bump_type() {
+    local range="$1" subjects bodies
+    subjects=$(git log "$range" --format=%s 2>/dev/null || true)
+    bodies=$(git log "$range" --format=%b 2>/dev/null || true)
+    if grep -qE '^[A-Za-z]+(\([^)]*\))?!:' <<<"$subjects" \
+       || grep -qE 'BREAKING[ -]CHANGE' <<<"${subjects}"$'\n'"${bodies}"; then
+        echo major
+    elif grep -qE '^feat(\([^)]*\))?:' <<<"$subjects"; then
+        echo minor
+    else
+        echo patch
+    fi
 }
 
 # ---------- Release helpers ----------
@@ -1043,21 +1135,15 @@ Respond with exactly one word: major, minor, or patch"
     local saved_system="$SYSTEM_PROMPT"
     SYSTEM_PROMPT="$RELEASE_SYSTEM_PROMPT"
 
-    local result
-    case "$PROVIDER" in
-        openai)    result=$(call_openai "$user_prompt") ;;
-        anthropic) result=$(call_anthropic "$user_prompt") ;;
-        gemini)    result=$(call_gemini "$user_prompt") ;;
-        groq)      result=$(call_groq "$user_prompt") ;;
-        ollama)    result=$(call_ollama "$user_prompt") ;;
-        custom)    result=$(call_custom "$user_prompt") ;;
-    esac
-
+    local result rc=0
+    result=$(ai_complete "$user_prompt") || rc=$?
     SYSTEM_PROMPT="$saved_system"
+    (( rc == 0 )) || return 1
 
     result=$(echo "$result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
     if [[ "$result" != "major" && "$result" != "minor" && "$result" != "patch" ]]; then
-        echo "Error: AI returned unexpected bump type: '$result'" >&2
+        ai_record_error fatal "AI returned unexpected bump type: '$result'"
+        echo "aicommit: $(ai_last_error)" >&2
         return 1
     fi
     echo "$result"
@@ -1083,16 +1169,10 @@ Return the JSON now."
 
     local saved_system="$SYSTEM_PROMPT"
     SYSTEM_PROMPT="$DISCOVERY_SYSTEM_PROMPT"
-    local result
-    case "$PROVIDER" in
-        openai)    result=$(call_openai "$user_prompt") ;;
-        anthropic) result=$(call_anthropic "$user_prompt") ;;
-        gemini)    result=$(call_gemini "$user_prompt") ;;
-        groq)      result=$(call_groq "$user_prompt") ;;
-        ollama)    result=$(call_ollama "$user_prompt") ;;
-        custom)    result=$(call_custom "$user_prompt") ;;
-    esac
+    local result rc=0
+    result=$(ai_complete "$user_prompt") || rc=$?
     SYSTEM_PROMPT="$saved_system"
+    (( rc == 0 )) || return 1
 
     # Strip any markdown fences the model may add
     result=$(echo "$result" | sed '/^```/d')
@@ -1655,7 +1735,7 @@ do_release() {
             local gen_msg
             gen_msg=$(generate_commit_message "$full_diff")
 
-            echo -e "\nAI-generated commit message:"
+            print_message_header "AI-generated commit message:"
             echo "--------------------------------"
             echo -e "$gen_msg"
             echo "--------------------------------"
@@ -1767,7 +1847,12 @@ do_release() {
             local commit_count
             commit_count=$(echo "$commits" | wc -l)
             echo "Analyzing $commit_count commit(s) since ${latest_tag} to determine bump type (provider: $PROVIDER, model: ${MODEL:-auto})..."
-            bump_type=$(ai_detect_bump "$commits" "$current_ver") || exit 1
+            if ! bump_type=$(ai_detect_bump "$commits" "$current_ver"); then
+                local bump_cause
+                bump_cause=$(ai_last_error)
+                bump_type=$(deterministic_bump_type "${latest_tag}..HEAD")
+                echo -e "  ${C_YELLOW}WARNING: AI bump detection failed (${bump_cause:-unknown error}); using deterministic bump '${bump_type}' from conventional-commit subjects since ${latest_tag}.${C_RESET}"
+            fi
         fi
     elif [[ "$RELEASE_ARG" =~ ^(patch|minor|major)$ ]]; then
         bump_type="$RELEASE_ARG"
@@ -1807,6 +1892,14 @@ do_release() {
             echo "Release cancelled."
             exit 0
         fi
+    fi
+
+    # Arm rollback: until the tag exists, any failure restores the pre-release
+    # tree (see aicommit_on_exit) so files are never left bumped without a tag.
+    if [[ -z "$(git status --porcelain)" ]]; then
+        RELEASE_ROLLBACK_HEAD=$(git rev-parse HEAD)
+    else
+        echo -e "${C_YELLOW}Warning: working tree not clean; automatic rollback on failure is disabled.${C_RESET}"
     fi
 
     # 1. Update version files in the current project
@@ -1862,11 +1955,18 @@ do_release() {
     # 3. Commit the release
     echo "Committing release v${next_version}..."
     git add -A
-    git commit -m "chore(release): v${next_version}" || true
+    if ! git commit -m "chore(release): v${next_version}"; then
+        # Nothing to commit is fine; a real failure (e.g. a hook) must not tag.
+        if ! git diff --cached --quiet; then
+            echo -e "${C_RED}Error:${C_RESET} release commit failed."
+            exit 1
+        fi
+    fi
 
     # 4. Create annotated tag
     echo "Creating tag v${next_version}..."
     git tag -a "v${next_version}" -m "Release v${next_version}"
+    RELEASE_ROLLBACK_HEAD=""   # tagged: files and tag agree, nothing to roll back
 
     # 5. Push commit + tag (unless --no-push)
     if $NO_PUSH; then
@@ -2149,7 +2249,7 @@ echo "Analyzing changes and generating commit message (provider: $PROVIDER, mode
 GENERATED_MSG=$(generate_commit_message "$FULL_DIFF")
 
 # ---- User review ----
-echo -e "\nAI‑generated commit message:"
+print_message_header "AI‑generated commit message:"
 echo "--------------------------------"
 echo -e "$GENERATED_MSG"
 echo "--------------------------------"
