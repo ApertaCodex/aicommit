@@ -14,6 +14,10 @@ get_project_root() {
 # Setup a temporary git repository for testing
 setup_test_repo() {
   TEST_DIR=$(mktemp -d)
+  # Isolate HOME (outside the repo) so tests never touch the real
+  # ~/.aicommitrc or ~/.gitconfig.
+  TEST_HOME=$(mktemp -d)
+  export HOME="$TEST_HOME"
   cd "$TEST_DIR" || exit 1
   git init
   git config user.name "Test User"
@@ -25,6 +29,9 @@ teardown_test_repo() {
   if [ -n "$TEST_DIR" ] && [ -d "$TEST_DIR" ]; then
     cd / || exit 1
     rm -rf "$TEST_DIR"
+  fi
+  if [ -n "${TEST_HOME:-}" ] && [ -d "$TEST_HOME" ]; then
+    rm -rf "$TEST_HOME"
   fi
 }
 

@@ -51,6 +51,11 @@ teardown() {
   unset AICOMMIT_CUSTOM_API_URL
   unset AICOMMIT_CUSTOM_API_KEY
   rm -f "$HOME/.aicommitrc"
+  # Ollama auto-detection probes localhost:11434 directly; a running local
+  # server legitimately counts as a configured provider.
+  if curl -sf --max-time 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
+    skip "a local Ollama server is running"
+  fi
   # Use a restricted PATH that excludes ollama so auto-detect won't find it
   export PATH="/usr/bin:/bin"
   echo "test" > test.txt
