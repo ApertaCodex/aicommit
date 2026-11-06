@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.26.1] - 2026-11-06
 ### Fixed
 - Provider errors (HTTP status >= 400, or a JSON `error` field) are no longer treated as an empty reply: the real error is printed once, other 4xx are not retried, and 5xx/408/429/network errors are retried with exponential backoff
 - Errors from a `--model-url` endpoint name the host (`Error from 127.0.0.1:8318 (openai-compatible)`) instead of "OpenAI API"
@@ -13,8 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release bump detection no longer aborts on a provider error or an invalid answer: it falls back to a deterministic bump from Conventional Commit subjects (breaking -> major, feat -> minor, else patch) and says why
 - A release that fails after bumping version files but before tagging now rolls the bump back, and a failed release commit no longer gets tagged
 - The update check no longer aborts the run when the GitHub API request fails
-
-
 ## [1.24.0] - 2026-07-15
 ### Added
 - Opt-in version rollover for releases (`--rollover` flag, `AICOMMIT_ROLLOVER=true` env var, or config file). When a version component reaches its per-position max it resets to 0 and carries into the next more-significant one. Defaults: `X.Y.Z` → Y max 10, Z max 100; `X.Y` → Y max 10; `X` → no max. Maxes are tunable via `AICOMMIT_ROLLOVER_MAX_MINOR` and `AICOMMIT_ROLLOVER_MAX_PATCH`. Off by default.
